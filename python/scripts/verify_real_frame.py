@@ -106,9 +106,11 @@ def main() -> None:
     print(
         "\n[NOTE] This is a code-path verification on one real photograph, "
         "not a dataset accuracy benchmark -- no ground truth is compared "
-        "here. See docs/paper/monoarm_paper.tex Section 'Dataset Access "
-        "and Reproducing Real-Data Validation' for why full ground-truth "
-        "validation is not run in this environment."
+        "here. For measured accuracy against real 3D ground truth, run "
+        "scripts/fetch_panoptic_sample.sh then scripts.evaluate_panoptic; "
+        "see the paper's 'Accuracy Against 3D Motion-Capture Ground Truth'. "
+        "These angles are also landmarker-version sensitive -- see that "
+        "paper section on runtime dependencies."
     )
 
 

@@ -12,6 +12,7 @@ PoseTrack/data/
 PoseTrack/outputs/
 PoseTrack/benchmarks/results/
 outputs/
+docs/paper
 
 # Downloaded at first run by posenet_runner.py (the MediaPipe .task model is tracked)
 python/src/pose/models/posenet_mobilenet_v1_100_257x257.tflite

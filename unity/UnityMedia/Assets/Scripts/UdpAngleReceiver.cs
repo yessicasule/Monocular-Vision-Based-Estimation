@@ -119,6 +119,17 @@ namespace MonoArm
         bool      _pendingReady;
         float     _lastPacketTime;
 
+        // Parse-error throttling. A malformed sender streams malformed packets,
+        // so an unguarded warning here fires once per packet — tens of times a
+        // second, from a background thread, each one capturing a stack trace and
+        // marshalling to the main thread. That alone is enough to stall scene
+        // updates. Report the first failure, then at most one summary per
+        // interval, and never lose the total count.
+        const double ParseErrorLogIntervalSeconds = 5.0;
+        int      _parseErrorCount;
+        int      _parseErrorsAtLastLog;
+        DateTime _lastParseErrorLogUtc = DateTime.MinValue;
+
         // Singleton guard — one receiver per scene
         static UdpAngleReceiver _instance;
 
@@ -240,9 +251,44 @@ namespace MonoArm
                 catch (ObjectDisposedException) { break; }
                 catch (Exception ex)
                 {
-                    Debug.LogWarning($"[UdpAngleReceiver] Parse error: {ex.Message}");
+                    ReportParseError(ex);
                 }
             }
+        }
+
+        /// <summary>
+        /// Record a parse failure, logging at most once per
+        /// <see cref="ParseErrorLogIntervalSeconds"/>.
+        /// </summary>
+        /// <remarks>
+        /// Called from the background receive thread. Everything before the
+        /// interval check is a counter increment and a clock read, so the
+        /// common case — a steady stream of malformed packets — costs no string
+        /// formatting, no stack-trace capture, and no main-thread marshalling.
+        /// Suppressed failures are counted and reported in the next summary, so
+        /// throttling hides none of the diagnostic signal.
+        ///
+        /// DateTime.UtcNow is used rather than Time.unscaledTime because the
+        /// Unity time API is main-thread only.
+        /// </remarks>
+        void ReportParseError(Exception ex)
+        {
+            _parseErrorCount++;
+
+            DateTime now = DateTime.UtcNow;
+            if ((now - _lastParseErrorLogUtc).TotalSeconds < ParseErrorLogIntervalSeconds)
+                return;
+
+            int suppressed = _parseErrorCount - _parseErrorsAtLastLog - 1;
+            _lastParseErrorLogUtc  = now;
+            _parseErrorsAtLastLog  = _parseErrorCount;
+
+            string suffix = suppressed > 0
+                ? $" ({suppressed} similar suppressed in the last "
+                  + $"{ParseErrorLogIntervalSeconds:0}s; {_parseErrorCount} total)"
+                : string.Empty;
+
+            Debug.LogWarning($"[UdpAngleReceiver] Parse error: {ex.Message}{suffix}");
         }
 
         // ── Packet parser ───────────────────────────────────────────────────

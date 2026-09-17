@@ -27,8 +27,15 @@ from src.evaluation.h36m_loader import (
     _compute_gt_angles,
     _normalize,
     GTAngles,
+    gt_angles_from_row,
+    row_to_joint_positions,
     H36M_RSHOULDER, H36M_RELBOW, H36M_RWRIST,
     H36M_LSHOULDER, H36M_RHIP, H36M_LHIP, H36M_CHEST,
+)
+from src.evaluation.h36m_skeleton import (
+    N_JOINTS, OFFSET, PARENT, EXPMAP_IND,
+    expmap_to_rotmat, forward_kinematics, forward_kinematics_batch,
+    bone_length_report,
 )
 from src.evaluation.metrics import (
     compute_joint_metrics, evaluate_framework, print_metrics_table,
@@ -246,6 +253,203 @@ class TestH36mLoader(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Metrics Tests
 # ---------------------------------------------------------------------------
+
+class TestH36mSkeleton(unittest.TestCase):
+    """
+    Forward kinematics for the exponential-map H3.6M release.
+
+    These guard the distinction that broke the original loader: 99-value rows
+    are axis-angle rotations, not Cartesian positions, and must go through
+    forward kinematics before any angle is computed.
+    """
+
+    @staticmethod
+    def _random_frame(seed: int = 0) -> np.ndarray:
+        """
+        A synthetic exponential-map frame shaped like real H3.6M data.
+
+        Real recordings carry translation channels only on the root; every
+        other joint's translation triplet is zero, which is what makes the
+        skeleton rigid. Randomising those channels too would fabricate a
+        stretchy skeleton that no H3.6M file contains.
+        """
+        rng = np.random.default_rng(seed)
+        frame = rng.normal(0.0, 0.12, size=99)
+
+        # Every arm offset in this skeleton runs along the local Y axis, so the
+        # zero pose collapses both shoulders onto the spine — a degenerate
+        # torso. Real recordings carry roughly quarter-turn rotations at the
+        # shoulder anchors, which is what spreads the arms laterally; without
+        # them the fixture would exercise only the degenerate path. Small
+        # perturbations then keep the pose varied but anatomically intact.
+        quarter_turn = np.pi / 2
+        frame[EXPMAP_IND[16]] += [0.0, 0.0,  quarter_turn]   # LShoulderAnchor
+        frame[EXPMAP_IND[24]] += [0.0, 0.0, -quarter_turn]   # RShoulderAnchor
+        return frame
+
+    def test_expmap_zero_is_identity(self):
+        np.testing.assert_allclose(
+            expmap_to_rotmat(np.zeros(3)), np.eye(3), atol=1e-12
+        )
+
+    def test_expmap_is_a_rotation_matrix(self):
+        R = expmap_to_rotmat(np.array([0.3, -1.1, 0.7]))
+        np.testing.assert_allclose(R @ R.T, np.eye(3), atol=1e-12)
+        self.assertAlmostEqual(float(np.linalg.det(R)), 1.0, places=12)
+
+    def test_expmap_half_turn_about_z(self):
+        R = expmap_to_rotmat(np.array([0.0, 0.0, np.pi]))
+        np.testing.assert_allclose(
+            R, np.diag([-1.0, -1.0, 1.0]), atol=1e-12
+        )
+
+    def test_fk_output_shape(self):
+        xyz = forward_kinematics(self._random_frame())
+        self.assertEqual(xyz.shape, (N_JOINTS, 3))
+
+    def test_fk_rejects_wrong_width(self):
+        with self.assertRaises(ValueError):
+            forward_kinematics(np.zeros(96))
+
+    def test_fk_preserves_bone_lengths(self):
+        """
+        The skeleton is rigid: every bone must keep the length recorded in the
+        offset table regardless of pose. Drift here means the channel layout or
+        rotation composition is wrong.
+        """
+        frames = np.stack([self._random_frame(s) for s in range(12)])
+        xyz = forward_kinematics_batch(frames)
+
+        for i in range(N_JOINTS):
+            parent = PARENT[i]
+            if parent == -1:
+                continue
+            expected = float(np.linalg.norm(OFFSET[i]))
+            lengths = np.linalg.norm(xyz[:, i, :] - xyz[:, parent, :], axis=1)
+            np.testing.assert_allclose(
+                lengths, expected, atol=1e-6,
+                err_msg=f"bone {parent}->{i} length drifted",
+            )
+
+    def test_fk_arm_segments_are_anatomical(self):
+        """Right upper arm and forearm must match the offset table exactly."""
+        xyz = forward_kinematics_batch(np.stack([self._random_frame(s) for s in range(4)]))
+        report = bone_length_report(xyz)
+        self.assertAlmostEqual(report["right_upper_arm_mm"], 278.892924, places=4)
+        self.assertAlmostEqual(report["right_forearm_mm"],   251.728680, places=4)
+        self.assertLess(report["max_length_std_mm"], 1e-6)
+
+    def test_zero_pose_places_head_above_feet(self):
+        """A rest-pose frame must produce an upright skeleton, not an inverted one."""
+        xyz = forward_kinematics(np.zeros(99))
+        head, foot = xyz[15], xyz[3]
+        self.assertGreater(head[1], foot[1])
+
+    def test_row_dispatch_by_width(self):
+        """96 values are positions; 99 are rotations; anything else is an error."""
+        positions = np.arange(96, dtype=np.float64)
+        np.testing.assert_allclose(
+            row_to_joint_positions(positions), positions.reshape(32, 3)
+        )
+
+        expmap = self._random_frame(3)
+        np.testing.assert_allclose(
+            row_to_joint_positions(expmap), forward_kinematics(expmap)
+        )
+
+        with self.assertRaises(ValueError):
+            row_to_joint_positions(np.zeros(99 * 2))
+
+    def test_expmap_row_is_not_read_as_positions(self):
+        """
+        Regression: the original loader reshaped a 99-value row to (33, 3) and
+        read joints straight out of it. That path must be gone — the dispatched
+        positions have to differ from the naive reinterpretation.
+        """
+        row = self._random_frame(7)
+        naive = row.reshape(33, 3)[:32]
+        dispatched = row_to_joint_positions(row)
+        self.assertGreater(float(np.abs(dispatched - naive).max()), 1.0)
+
+    def test_gt_angles_from_row_accepts_both_formats(self):
+        row = self._random_frame(11)
+        gt_expmap = gt_angles_from_row(row, frame_idx=4, subject="S9", action="walking_1")
+        self.assertIsNotNone(gt_expmap)
+        self.assertEqual(gt_expmap.frame_idx, 4)
+        self.assertEqual(gt_expmap.subject, "S9")
+        self.assertEqual(gt_expmap.action, "walking_1")
+
+        positions = forward_kinematics(row).ravel()
+        gt_positions = gt_angles_from_row(positions)
+        self.assertIsNotNone(gt_positions)
+
+        # Both routes describe the same skeleton, so the angles must agree.
+        self.assertAlmostEqual(
+            gt_expmap.elbow_flexion, gt_positions.elbow_flexion, places=3
+        )
+        self.assertAlmostEqual(
+            gt_expmap.shoulder_flexion, gt_positions.shoulder_flexion, places=3
+        )
+
+    def test_gt_angles_from_row_returns_none_on_bad_width(self):
+        self.assertIsNone(gt_angles_from_row(np.zeros(7)))
+
+    def test_degenerate_torso_is_rejected(self):
+        """
+        A torso whose shoulder axis is collinear with the spine does not span a
+        plane, so Gram-Schmidt has nothing to orthogonalise against and the
+        frame becomes arbitrary. Such a skeleton must be rejected outright
+        rather than yielding confident-looking nonsense angles.
+        """
+        joints = np.zeros((N_JOINTS, 3))
+        joints[H36M_RHIP] = [-130.0, 0.0, 0.0]
+        joints[H36M_LHIP] = [130.0, 0.0, 0.0]
+        # Both shoulders stacked along the spine: the lateral axis collapses.
+        joints[H36M_RSHOULDER] = [0.0, 500.0, 0.0]
+        joints[H36M_LSHOULDER] = [0.0, 640.0, 0.0]
+        joints[H36M_RELBOW] = [0.0, 260.0, 0.0]
+        joints[H36M_RWRIST] = [0.0, 20.0, 0.0]
+
+        self.assertIsNone(_compute_gt_angles(joints))
+
+    def test_healthy_torso_is_accepted(self):
+        """The degeneracy guard must not reject an ordinary upright skeleton."""
+        joints = np.zeros((N_JOINTS, 3))
+        joints[H36M_RHIP] = [-130.0, 0.0, 0.0]
+        joints[H36M_LHIP] = [130.0, 0.0, 0.0]
+        joints[H36M_RSHOULDER] = [-170.0, 620.0, 0.0]
+        joints[H36M_LSHOULDER] = [170.0, 620.0, 0.0]
+        joints[H36M_RELBOW] = [-170.0, 340.0, 0.0]
+        joints[H36M_RWRIST] = [-170.0, 90.0, 0.0]
+
+        gt = _compute_gt_angles(joints)
+        self.assertIsNotNone(gt)
+        # Arm hanging straight down beside the torso.
+        self.assertAlmostEqual(gt.elbow_flexion, 0.0, places=3)
+        self.assertAlmostEqual(gt.shoulder_flexion, 0.0, places=3)
+        self.assertAlmostEqual(gt.shoulder_abduction, 0.0, places=3)
+
+    def test_elbow_flexion_is_frame_invariant(self):
+        """
+        Elbow flexion is the angle between two body-fixed vectors, so it cannot
+        depend on the global orientation of the skeleton.
+        """
+        row = self._random_frame(5)
+        xyz = forward_kinematics(row)
+
+        theta = 0.9
+        c, s = np.cos(theta), np.sin(theta)
+        R = np.array([[c, 0.0, s], [0.0, 1.0, 0.0], [-s, 0.0, c]])
+        rotated = (xyz @ R.T) + np.array([120.0, -45.0, 900.0])
+
+        a = _compute_gt_angles(xyz)
+        b = _compute_gt_angles(rotated)
+        self.assertIsNotNone(a)
+        self.assertIsNotNone(b)
+        self.assertAlmostEqual(a.elbow_flexion, b.elbow_flexion, places=6)
+        self.assertAlmostEqual(a.shoulder_flexion, b.shoulder_flexion, places=6)
+        self.assertAlmostEqual(a.shoulder_abduction, b.shoulder_abduction, places=6)
+
 
 class TestMetrics(unittest.TestCase):
 

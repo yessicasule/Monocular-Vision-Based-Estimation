@@ -31,8 +31,10 @@ Evaluation Modes (--mode is REQUIRED)
         Runs the real pose estimation frameworks on H3.6M video frames.
         This is the ONLY mode whose results are publication-grade.
         Requires:
-            (a) H3.6M video download from http://vision.imar.ro/human3.6m/
-            (b) Frame extraction with --frame_dir argument
+            (a) The registration-gated H3.6M video + D3_Positions release
+                (docs/DATA_H36M.md explains how to obtain it)
+            (b) scripts/prepare_h36m.py run over it, then --manifest pointed
+                at the manifest.json it writes
 
     --mode csv
         Loads previously computed real predictions from a dataset CSV
@@ -55,10 +57,14 @@ Protocols
 
 Usage
 -----
-    # Publication run (requires extracted frames)
+    # Publication run (requires the prepared video release)
+    python scripts/prepare_h36m.py \\
+        --h36m_root data/dataset/h3.6m/raw \\
+        --out_dir   data/dataset/h3.6m/prepared \\
+        --subjects  S9 S11 --stride 5
+
     python scripts/evaluate_h36m.py \\
-        --h36m_dir data/dataset/h3.6m/dataset \\
-        --frame_dir data/dataset/h3.6m/frames \\
+        --manifest data/dataset/h3.6m/prepared/manifest.json \\
         --mode live \\
         --frameworks mediapipe movenet_lightning posenet
 
@@ -100,7 +106,7 @@ if sys.platform == "win32":
 import numpy as np
 import pandas as pd
 
-from src.evaluation.h36m_loader import iter_h36m_dataset
+from src.evaluation.h36m_loader import iter_h36m_dataset, gt_angles_from_row
 from src.evaluation.metrics import (
     evaluate_framework, print_metrics_table, metrics_to_dict,
     JOINTS, JOINTS_BILATERAL, FrameworkMetrics,
@@ -196,6 +202,97 @@ def load_gt_arrays(
     return gt_arrays, meta
 
 
+def load_manifest_gt(
+    manifest_path: Path,
+    subjects:      list[str] | None,
+    max_frames:    int | None,
+) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], list[Path]]:
+    """
+    Load ground truth and the paired frame paths from a prepare_h36m manifest.
+
+    This is the alignment-safe counterpart to load_gt_arrays() + a frame glob.
+    Ground truth is read at the exact ``gt_row`` the manifest records for each
+    frame, and a sample whose skeleton is degenerate is dropped from the GT
+    array and the frame list together, so index i of the returned arrays always
+    refers to index i of the returned frame paths.
+
+    Returns
+    -------
+    (gt_arrays, meta, frame_paths)
+    """
+    print(f"[→] Loading manifest {manifest_path}")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    root = manifest_path.parent
+
+    samples = manifest["samples"]
+    if subjects:
+        keep = set(subjects)
+        samples = [s for s in samples if s["subject"] in keep]
+    if not samples:
+        raise ValueError(
+            f"No manifest samples for subjects {subjects}. "
+            f"Manifest contains {manifest.get('subjects')}."
+        )
+
+    # Group by (subject, action) so each positions file is read exactly once.
+    by_seq: dict[tuple[str, str], list[dict]] = {}
+    for s in samples:
+        by_seq.setdefault((s["subject"], s["action"]), []).append(s)
+
+    buckets: dict[str, list[float]] = {j: [] for j in JOINTS_BILATERAL}
+    subjects_col: list[str] = []
+    sequence_col: list[str] = []
+    frame_paths: list[Path] = []
+    n_dropped = 0
+
+    positions_dir = root / manifest.get("positions_dir", "positions")
+
+    for (subject, action), seq_samples in sorted(by_seq.items()):
+        pos_path = positions_dir / subject / f"{action}.txt"
+        if not pos_path.is_file():
+            print(f"  [!] missing positions file {pos_path} — sequence skipped")
+            continue
+        rows = np.loadtxt(pos_path, delimiter=",", ndmin=2)
+
+        for s in sorted(seq_samples, key=lambda x: x["gt_row"]):
+            if max_frames is not None and len(frame_paths) >= max_frames:
+                break
+            gt_row = s["gt_row"]
+            if gt_row >= len(rows):
+                n_dropped += 1
+                continue
+            gt = gt_angles_from_row(rows[gt_row], gt_row, subject, action)
+            if gt is None:
+                n_dropped += 1
+                continue
+
+            buckets["shoulder_flexion"].append(gt.shoulder_flexion)
+            buckets["shoulder_abduction"].append(gt.shoulder_abduction)
+            buckets["shoulder_rotation"].append(gt.shoulder_rotation)
+            buckets["elbow_flexion"].append(gt.elbow_flexion)
+            buckets["left_shoulder_flexion"].append(gt.left_shoulder_flexion)
+            buckets["left_shoulder_abduction"].append(gt.left_shoulder_abduction)
+            buckets["left_shoulder_rotation"].append(gt.left_shoulder_rotation)
+            buckets["left_elbow_flexion"].append(gt.left_elbow_flexion)
+            subjects_col.append(subject)
+            sequence_col.append(f"{subject}/{action}")
+            frame_paths.append(root / s["frame_file"])
+
+    if not frame_paths:
+        raise ValueError("Manifest produced no usable samples.")
+
+    print(f"[✓] {len(frame_paths):,} paired GT/frame samples"
+          + (f" ({n_dropped} dropped: degenerate or out-of-range)" if n_dropped else ""))
+
+    gt_arrays = {j: np.array(v, dtype=np.float64) for j, v in buckets.items()}
+    gt_arrays = {j: a for j, a in gt_arrays.items() if not np.all(np.isnan(a))}
+    meta = {
+        "subject":  np.array(subjects_col),
+        "sequence": np.array(sequence_col),
+    }
+    return gt_arrays, meta, frame_paths
+
+
 # ── Synthetic mode ────────────────────────────────────────────────────────────
 
 def synthetic_predictions(
@@ -240,21 +337,20 @@ def synthetic_predictions(
 
 def live_predictions(
     gt_arrays:   dict[str, np.ndarray],
-    frame_dir:   Path,
+    frame_paths: list[Path],
     frameworks:  list[str],
 ) -> dict[str, dict[str, np.ndarray]]:
     """
     Run pose estimation frameworks on H3.6M video frames and collect angles.
 
-    Assumes frames are organised as:
-        frame_dir/<subject>/<action>/frame_NNNNNN.jpg
-
     Parameters
     ----------
     gt_arrays : dict[joint → np.ndarray]
-        GT angles (used to get frame count and clip predictions to same length).
-    frame_dir : Path
-        Root directory of extracted frames.
+        GT angles. Element i must correspond to frame_paths[i]; the manifest
+        path (load_manifest_gt) guarantees this, and it is the only supported
+        way to build the pairing.
+    frame_paths : list[Path]
+        Frame images, index-aligned with the GT arrays.
     frameworks : list[str]
         Framework names to evaluate (passed to load_estimator()).
 
@@ -270,15 +366,15 @@ def live_predictions(
     preds: dict[str, dict[str, np.ndarray]] = {}
     joints = [j for j in JOINTS_BILATERAL if j in gt_arrays] or list(JOINTS)
 
-    # Collect sorted frame paths
-    frame_paths = sorted(frame_dir.rglob("*.jpg"))
-    if not frame_paths:
-        frame_paths = sorted(frame_dir.rglob("*.png"))
-    if not frame_paths:
-        raise FileNotFoundError(f"No .jpg/.png frames found under {frame_dir}")
+    if len(frame_paths) != n_gt:
+        raise ValueError(
+            f"GT/frame misalignment: {n_gt} ground-truth samples but "
+            f"{len(frame_paths)} frames. Rebuild the manifest with "
+            f"scripts/prepare_h36m.py rather than pairing frames by filename."
+        )
 
-    n_frames = min(len(frame_paths), n_gt)
-    print(f"[→] Found {len(frame_paths)} frames; evaluating first {n_frames}")
+    n_frames = n_gt
+    print(f"[→] Evaluating {n_frames} manifest-paired frames")
 
     for fw_name in frameworks:
         print(f"\n  Running {fw_name} on {n_frames} frames...")
@@ -567,8 +663,10 @@ def main() -> None:
     )
     ap.add_argument("--h36m_dir",   default="data/dataset/h3.6m/dataset",
                     help="Root of H3.6M skeleton .txt files")
-    ap.add_argument("--frame_dir",  default=None,
-                    help="Root of extracted H3.6M frames (live mode only)")
+    ap.add_argument("--manifest",   default=None,
+                    help="manifest.json from scripts/prepare_h36m.py, pairing "
+                         "each extracted video frame with its ground-truth "
+                         "pose row (required for --mode live)")
     ap.add_argument("--csv",        default=None,
                     help="Pre-built dataset CSV from build_h36m_dataset.py")
     ap.add_argument("--mode",       choices=["live", "csv", "synthetic"],
@@ -624,14 +722,16 @@ def main() -> None:
         gt_arrays, pred_data = csv_predictions(Path(args.csv))
 
     elif args.mode == "live":
-        if not args.frame_dir:
-            print("[✗] --mode live requires --frame_dir <extracted frames>")
+        if not args.manifest:
+            print("[✗] --mode live requires --manifest <prepared manifest.json>")
+            print("    Build one with:  python scripts/prepare_h36m.py "
+                  "--h36m_root <raw release> --out_dir <prepared>")
+            print("    See docs/DATA_H36M.md for obtaining the video release.")
             sys.exit(1)
-        gt_arrays, meta = load_gt_arrays(Path(args.h36m_dir), args.subjects, args.max_frames)
-        if not any(len(v) > 0 for v in gt_arrays.values()):
-            print("[✗] GT data empty — check h36m_dir")
-            sys.exit(1)
-        pred_data = live_predictions(gt_arrays, Path(args.frame_dir), args.frameworks)
+        gt_arrays, meta, frame_paths = load_manifest_gt(
+            Path(args.manifest), args.subjects, args.max_frames
+        )
+        pred_data = live_predictions(gt_arrays, frame_paths, args.frameworks)
 
     else:   # synthetic (explicit opt-in smoke test)
         gt_arrays, meta = load_gt_arrays(Path(args.h36m_dir), args.subjects, args.max_frames)

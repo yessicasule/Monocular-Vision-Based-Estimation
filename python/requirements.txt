@@ -16,6 +16,11 @@ scipy
 # Structured result export (Excel workbooks)
 openpyxl>=3.1
 
+# Reads Human3.6M D3_Positions .cdf pose files (scripts/prepare_h36m.py).
+# Only needed to prepare the registration-gated video release; see
+# docs/DATA_H36M.md.
+cdflib>=1.2
+
 # TensorFlow for MoveNet.
 # <2.18 is required: 2.18/2.19 allow protobuf 5.x and 2.20+ require it, either
 # of which breaks mediapipe's protobuf<5 pin with an opaque C-extension error.

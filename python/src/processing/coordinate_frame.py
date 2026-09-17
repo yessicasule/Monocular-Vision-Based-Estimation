@@ -38,6 +38,11 @@ LM_RIGHT_SHOULDER = 12
 LM_LEFT_HIP       = 23
 LM_RIGHT_HIP      = 24
 
+# Minimum sine of the angle between the shoulder axis and the spine for the
+# torso frame to be well-conditioned. See build_torso_frame() for why a frame
+# below this threshold must be rejected rather than normalised.
+MIN_TORSO_CONDITIONING = 0.1
+
 
 @dataclass
 class TorsoFrame:
@@ -145,6 +150,18 @@ def build_torso_frame(landmarks) -> TorsoFrame | None:
     #   x' = x - (x·y)y      (remove y-component from x)
     #   z  = x' × y          (right-hand forward axis)
     x_orth = x_cand - np.dot(x_cand, y_cand) * y_cand
+
+    # Reject a torso whose lateral axis is (near-)collinear with the spine.
+    # ||x_orth|| here is sin(angle between the shoulder axis and the spine), so
+    # it collapses toward zero exactly when the two candidates stop spanning a
+    # plane — a subject seen edge-on, or a frame where both shoulders project
+    # to nearly the same point. Normalising through that collapse divides by
+    # noise and yields a frame that looks valid but is arbitrary, so every
+    # angle derived from it would be meaningless. An anatomically intact torso
+    # sits near 1.0; 0.1 (5.7 degrees) rejects only genuine degeneracy.
+    if np.linalg.norm(x_orth) < MIN_TORSO_CONDITIONING:
+        return None
+
     x_orth = _normalize(x_orth)
 
     z_axis = np.cross(x_orth, y_cand)

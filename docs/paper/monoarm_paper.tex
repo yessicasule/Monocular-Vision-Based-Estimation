@@ -49,20 +49,28 @@ reported as a noise-dominated value. Three causal temporal filters
 implemented per channel and compared on a common jitter/lag benchmark; a
 three-tier calibration maps raw estimates to a user's range of motion
 under bounded-gain guards; and a UDP protocol streams filtered angles to
-Unity's Humanoid muscle-space API. On a synthetic benchmark the Kalman
-filter attains $0.55^\circ$ static standard deviation with no measurable
-step lag, against $1.46^\circ$ and $133$~ms for a five-sample moving
-average, and all configurations meet the $\pm3$--$5^\circ$ static-pose
-target. A 55-case analytic test suite verifies the angle solver against
-closed-form reference poses, torso-frame orthonormality, filter dynamics,
-and cross-framework keypoint remapping; end-to-end inference with the
-real MediaPipe landmarker on a real photograph produces bilateral angles
-consistent with the observed pose. We report validation scope precisely:
-all results here derive from analytic, synthetic, or single-image
-verification, and quantitative accuracy against large-scale 3D
-motion-capture ground truth (Human3.6M, CMU Panoptic Studio) was not
-obtainable in our environment; the complete evaluation harness for that
-comparison ships with the system and is documented for reuse.
+a rigged Unity avatar. On a synthetic benchmark the Kalman filter attains
+$0.55^\circ$ static standard deviation with no measurable step lag,
+against $1.46^\circ$ and $133$~ms for a five-sample moving average, and
+all configurations meet the $\pm3$--$5^\circ$ static-pose target. A
+55-case analytic test suite verifies the angle solver against closed-form
+reference poses, torso-frame orthonormality, filter dynamics, and
+cross-framework keypoint remapping. We then measure accuracy against real
+3D motion-capture ground truth on a CMU Panoptic Studio sequence, and the
+result is strongly anisotropic: shoulder abduction, which is carried by
+the image-plane projection, attains $6.7^\circ$ MAE with Pearson
+$r=0.98$, while every degree of freedom that depends on monocular depth
+degrades severely -- flexion $46.2^\circ$, axial rotation $30.9^\circ$,
+and elbow flexion $40.6^\circ$ MAE, the last with negative correlation --
+for a macro-averaged MPJAE of $36.1^\circ$. We report this negative
+result in full because it bounds the claim the method can support: a
+single RGB camera recovers the lateral component of arm posture well
+enough for avatar control or coarse range-of-motion tracking, but not the
+sagittal and axial components at the fidelity a calibration reference for
+a wearable exoskeleton would demand. We additionally document a class of
+integration error this evaluation exposed, in which the avatar control
+path silently inverted two degrees of freedom while every upstream
+component tested correct.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -115,12 +123,21 @@ ablation factor so that smoothing effects are never conflated with
 estimator accuracy (Section~\ref{sec:results-filters}).
 \item A three-tier calibration with bounded-gain guards that prevent a
 poorly-held reference pose from producing a runaway scale factor
-(Section~\ref{sec:calibration}), plus a UDP-to-Unity muscle-space control
-path that is avatar-agnostic (Section~\ref{sec:unity}).
-\item A validation account that separates analytically verified claims,
-synthetic benchmarks, and real-image verification from the dataset-scale
-accuracy comparison we could not run, together with the harness that
-would produce it (Sections~\ref{sec:results}--\ref{sec:limitations}).
+(Section~\ref{sec:calibration}), plus a UDP-to-Unity control path that
+poses the avatar by analytically inverting the same decomposition, rather
+than by mapping each angle onto a like-named engine parameter
+(Section~\ref{sec:unity}).
+\item A dataset-backed accuracy measurement against real 3D
+motion-capture ground truth showing that monocular error is strongly
+anisotropic by degree of freedom -- accurate in the image plane,
+unreliable in depth -- and an argument that macro-averaged MPJAE hides
+exactly this structure (Section~\ref{sec:results-panoptic}).
+\item An account of two error classes that unit-level correctness does
+not catch: an evaluation metric that appeared to show a clean linear
+trend while measuring the wrong frames, and an avatar control path that
+inverted two degrees of freedom while every component it composed tested
+correct in isolation (Sections~\ref{sec:results-occlusion},
+\ref{sec:unity}).
 \end{enumerate}
 
 \section{Related Work}
@@ -172,9 +189,10 @@ bootstrap confidence intervals, Holm-Bonferroni correction
 A vision module captures monocular RGB frames and runs a selected pose
 estimator. A processing module constructs a torso frame once per frame,
 decomposes four joint angles per arm, applies one causal temporal filter
-per channel (Section~\ref{sec:filtering}), and applies calibration. A Unity module receives the
-resulting angle stream over UDP and drives a Humanoid-rigged avatar
-through the muscle-space API, with an independent frame-rate-independent
+per channel (Section~\ref{sec:filtering}), and applies calibration. A
+Unity module receives the resulting angle stream over UDP and poses a
+Humanoid-rigged avatar by inverting the decomposition analytically
+(Section~\ref{sec:unity}), with an independent frame-rate-independent
 smoothing stage.
 
 \subsection{Torso Coordinate Frame}
@@ -310,11 +328,56 @@ newline-terminated packet per pose. A single-arm packet carries
 side holding its last value rather than snapping to zero. On the Unity
 side a background thread performs the blocking receive and publishes into
 a lock-protected double buffer, so the render loop never blocks on
-network I/O. Angles are mapped to Unity's normalized Humanoid muscle
-space through a configurable per-DOF linear transform and a
-\texttt{Mathf.SmoothDamp} stage; using \texttt{HumanPoseHandler} rather
-than named bone transforms keeps the controller avatar-agnostic across
-any Humanoid-rigged model.
+network I/O.
+
+Posing the avatar is where a subtlety arises that we think is worth
+reporting, because our first implementation got it wrong in a way that
+unit tests could not detect. Unity's Humanoid rig exposes normalized
+``muscle'' values in $[-1,+1]$, and it is natural to drive each muscle
+from the like-named angle: \texttt{Arm Down-Up} from abduction,
+\texttt{Arm Front-Back} from flexion, \texttt{Forearm Stretch} from elbow
+flexion. That mapping is not merely miscalibrated, it is not invertible.
+Sweeping \texttt{Arm Down-Up} across its full range while measuring the
+posed rig with the same decomposition used on the prediction side moves
+flexion from $-2^\circ$ to $168^\circ$ \emph{and} abduction from
+$-11^\circ$ to $63^\circ$ and back down to $29^\circ$; sweeping
+\texttt{Arm Front-Back} likewise moves both. Abduction is non-monotonic
+in each muscle, so a target of $40^\circ$ has two solutions on the same
+axis and no per-DOF calibration curve can recover the intended pose. The
+two shoulder muscles simply do not span the same basis as the solver's
+flexion/abduction decomposition.
+
+We therefore pose the arm by inverting Section~\ref{sec:angles}
+analytically. Given $(\theta_{flex}, \theta_{abd})$ the upper-arm
+direction in torso coordinates is recovered in closed form,
+\begin{equation}
+\mathbf{v} = \bigl(-\sin\theta_{abd},\;
+-\cos\theta_{abd}\cos\theta_{flex},\;
+-\cos\theta_{abd}\sin\theta_{flex}\bigr),
+\label{eq:inverse}
+\end{equation}
+and the forearm is placed at $\theta_{elbow}$ from that axis, swung about
+it by $\theta_{rot}$ in the same $(\mathbf{e}_1,\mathbf{e}_2)$ basis the
+forward solver builds, so that re-decomposing the posed rig returns the
+angles that were sent. The left arm reuses the sagittal reflection of
+Section~\ref{sec:bilateral}. Bones are then aligned to those two
+directions directly, so~(\ref{eq:inverse}) and the forward decomposition
+of Section~\ref{sec:angles} are exact inverses by construction rather
+than by fitting. Feeding known quadruples through the transport,
+posing the rig, and re-deriving the angles from the resulting bone
+positions reproduces the input to $0.00^\circ$ across eight poses
+spanning the workspace, on both arms.
+
+Two consequences follow from bypassing muscle space and are stated
+because they are load-bearing for anyone reusing this path. Rotations
+written onto bones are no longer clamped by the Avatar's configured joint
+limits -- muscle space saturates at $160^\circ$ of elbow flexion, whereas
+the direct path renders a requested $175^\circ$ faithfully -- so
+anatomically implausible input must be bounded upstream rather than by
+the rig. And bone writes must occur after the engine's animation stage
+evaluates: with a clip playing, posing before that stage loses the pose
+entirely, which we confirmed by measurement before moving the call
+accordingly.
 
 \section{Evaluation Methodology}
 \label{sec:eval-harness}
@@ -471,19 +534,19 @@ Simulated profile & Occ.\ & Hold & MAE & RMSE & Drift \\
  & (\%) & (\%) & (\textdegree) & (\textdegree) & (\textdegree) \\
 \midrule
 MediaPipe & 0  & 0.0  & 2.59 & 3.26 & --   \\
-MediaPipe & 25 & 25.0 & 2.60 & 3.27 & 0.83 \\
-MediaPipe & 50 & 50.8 & 2.60 & 3.29 & 1.92 \\
-MediaPipe & 75 & 75.3 & 2.56 & 3.23 & 2.76 \\
+MediaPipe & 25 & 25.0 & 2.60 & 3.27 & 3.63 \\
+MediaPipe & 50 & 48.3 & 2.58 & 3.25 & 3.67 \\
+MediaPipe & 75 & 74.9 & 2.59 & 3.27 & 3.66 \\
 \midrule
-MoveNet-Lightning & 0  & 0.0  & 4.30 & 5.40 & --   \\
-MoveNet-Lightning & 25 & 25.2 & 4.28 & 5.39 & 1.43 \\
-MoveNet-Lightning & 50 & 51.0 & 4.30 & 5.42 & 3.12 \\
-MoveNet-Lightning & 75 & 74.8 & 4.34 & 5.45 & 4.57 \\
+MoveNet-Lightning & 0  & 0.0  & 4.34 & 5.44 & --   \\
+MoveNet-Lightning & 25 & 24.4 & 4.37 & 5.48 & 5.99 \\
+MoveNet-Lightning & 50 & 50.5 & 4.36 & 5.47 & 6.09 \\
+MoveNet-Lightning & 75 & 76.0 & 4.39 & 5.49 & 6.22 \\
 \midrule
-PoseNet & 0  & 0.0  & 7.05 & 8.87 & --   \\
-PoseNet & 25 & 24.4 & 7.01 & 8.87 & 2.40 \\
-PoseNet & 50 & 51.3 & 7.02 & 8.84 & 4.77 \\
-PoseNet & 75 & 74.7 & 7.04 & 8.93 & 7.38 \\
+PoseNet & 0  & 0.0  & 7.01 & 8.81 & --   \\
+PoseNet & 25 & 24.2 & 6.98 & 8.77 & 9.66 \\
+PoseNet & 50 & 50.9 & 6.96 & 8.73 & 9.71 \\
+PoseNet & 75 & 75.2 & 7.03 & 8.81 & 9.77 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -500,13 +563,40 @@ MAE and RMSE remain essentially flat as occlusion rises to 75\%, which is
 a property of the metric rather than evidence of robustness: zero-order
 hold repeats the last valid estimate, and against a slowly varying
 trajectory a stale value is usually still close to the truth, so an
-unconditional error average absorbs the loss. Drift -- the deviation
-measured specifically over held frames -- grows close to linearly with
-the occlusion rate for all three profiles, as expected of hold-based
-dead reckoning against a moving target. We report both because the
-contrast is the actionable result: a system evaluated only on aggregate
-MAE would appear insensitive to tracking loss that drift exposes
-immediately.
+unconditional error average absorbs the loss.
+
+Drift is flat in the occlusion rate and scales instead with the
+estimator's own noise. That is the correct behavior for this experiment,
+and stating why is more useful than the number. The synthetic trajectory
+advances only about $0.13^\circ$ per frame, while the mean hold run at
+75\% occlusion is four frames; the ground truth therefore moves under a
+percent of a degree during a typical hold, which is negligible beside the
+$2.5$--$11^\circ$ per-DOF noise. What the held sample differs from the
+current sample by is then almost entirely two independent draws of that
+noise, whose expected absolute difference is $2\sigma/\sqrt{\pi}$. For
+the three profiles that predicts $3.67^\circ$, $6.06^\circ$ and
+$9.87^\circ$ against the measured $3.63^\circ$, $6.09^\circ$ and
+$9.71^\circ$. The experiment as configured therefore characterizes
+hold-versus-noise, and is structurally unable to expose staleness; doing
+that requires a trajectory whose motion per hold interval is comparable
+to the noise floor, which we flag as a design correction rather than
+present as a robustness finding.
+
+An earlier version of this measurement drew a fresh random mask when
+averaging drift instead of reusing the mask that selected the occluded
+frames. Because the two masks were independent and equal in rate, the
+average silently included non-occluded frames, on which the held and
+current estimates are identical and the deviation is exactly zero. The
+reported drift was consequently the true value scaled by the occlusion
+rate, which reproduced almost perfectly as $0.83^\circ$, $1.92^\circ$ and
+$2.76^\circ$ for MediaPipe -- that is, $0.25$, $0.50$ and $0.75$ times
+the constant $3.66^\circ$ above. The failure is instructive precisely
+because the corrupted numbers were more publishable than the correct
+ones: they rose monotonically with occlusion and invited the tidy
+conclusion that hold-based dead reckoning degrades linearly. A metric
+that agrees with expectation is not thereby validated, and we found this
+only by asking why a quantity should be linear rather than noting that it
+was.
 
 \subsection{End-to-End Verification on a Real Photograph}
 \label{sec:results-real-frame}
@@ -525,19 +615,32 @@ Kalman update execute together, producing:
 \toprule
 Side & Flex.\ (\textdegree) & Abd.\ (\textdegree) & Rot.\ (\textdegree) & Elbow (\textdegree) \\
 \midrule
-Right & $-35.25$ & $79.74$  & $151.58$ & $47.91$ \\
-Left  & $-130.64$ & $71.76$ & $136.96$ & $34.02$ \\
+Right & $18.97$ & $74.32$ & $154.36$ & $76.72$ \\
+Left  & $93.77$ & $72.95$ & $150.09$ & $70.28$ \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 Rotation is flagged reliable on both sides (elbow flexion exceeds the
 $25^\circ$ gate), and the filter update succeeds. The measured abduction
-values ($79.7^\circ$ and $71.8^\circ$) are consistent with the pose
+values ($74.3^\circ$ and $73.0^\circ$) are consistent with the pose
 visible in Fig.~\ref{fig:realframe}, in which both arms are raised
 laterally near shoulder height. This is a qualitative code-path
 verification, not an accuracy measurement: no ground-truth angle for this
 frame is used, and one frame cannot characterize an error distribution.
+
+These values supersede those in an earlier draft of this paper, which
+reported $-35.25^\circ$ flexion and $47.91^\circ$ elbow flexion on the
+right side for the same input image. The difference is the landmarker
+version: the earlier figures came from \texttt{mediapipe} 1.0.1 and the
+present ones from the 0.10.x line that the dependency constraints of
+Section~\ref{sec:deps} force. Nothing in the solver changed between them.
+A single-image verification is thus reproducible only against a pinned
+inference stack, and abduction -- the quantity
+Section~\ref{sec:results-panoptic} finds to be the well-conditioned one
+-- is also the quantity that stayed stable across the two versions
+($79.7^\circ$ versus $74.3^\circ$), while the depth-dependent channels
+moved by tens of degrees.
 
 \begin{figure}[t]
 \centering
@@ -550,44 +653,175 @@ participant recruited for this work.}
 \label{fig:realframe}
 \end{figure}
 
+\subsection{Accuracy Against 3D Motion-Capture Ground Truth}
+\label{sec:results-panoptic}
+We evaluate against real ground truth on CMU Panoptic Studio
+\cite{joo2015panoptic} sequence \texttt{171204\_pose1\_sample}, HD camera
+\texttt{00\_00}: 101 frames of video with 3D body keypoints reconstructed
+by the studio's multi-view rig. Ground-truth angles are computed from
+those 3D joints with the same torso-frame construction and the same
+decomposition applied to predictions (Section~\ref{sec:bilateral}), so
+both sides of the comparison live in one angle space. The real MediaPipe
+landmarker runs frame by frame on the extracted images; no synthetic
+substitution occurs anywhere in this experiment.
+
+Video and reconstruction are separate Panoptic pipelines with no
+guaranteed common start frame, so the harness estimates the offset by
+cross-correlation before scoring. It recovers a $-10$ frame shift at
+$r=0.982$, and the two arms agree on that shift independently, leaving
+$n=91$ aligned frames. Axial rotation is scored only on frames where each
+side's own ground-truth reliability gate is satisfied, so the $25^\circ$
+elbow criterion of Section~\ref{sec:angles} is applied to the reference
+rather than to the prediction.
+
+\begin{table}[t]
+\centering
+\caption{Per-DOF accuracy against CMU Panoptic 3D ground truth
+($n=91$ aligned frames, real MediaPipe inference). Degrees of freedom
+carried by the image-plane projection are separated from those requiring
+monocular depth.}
+\label{tab:panoptic}
+\begin{tabular}{@{}llccc@{}}
+\toprule
+ & DOF & MAE (\textdegree) & RMSE (\textdegree) & $r$ \\
+\midrule
+\multirow{2}{*}{In-plane}
+ & Abduction (R)        & \textbf{6.65}  & 8.53  & \textbf{0.982} \\
+ & Abduction (L)        & \textbf{6.73}  & 9.11  & \textbf{0.969} \\
+\midrule
+\multirow{6}{*}{Depth-dep.}
+ & Flexion (R)          & 46.22 & 67.88 & 0.753 \\
+ & Flexion (L)          & 64.42 & 87.05 & $-0.379$ \\
+ & Rotation (R)         & 30.88 & 33.43 & 0.831 \\
+ & Rotation (L)         & 47.07 & 58.57 & 0.496 \\
+ & Elbow (R)            & 40.61 & 44.42 & $-0.207$ \\
+ & Elbow (L)            & 46.50 & 48.53 & $-0.889$ \\
+\midrule
+\multicolumn{2}{@{}l}{MPJAE (macro-average)} & 36.14 & 44.69 & 0.319 \\
+\multicolumn{2}{@{}l}{PCK@$5^\circ$ / @$10^\circ$} & \multicolumn{3}{c}{21.7\% / 79.1\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{figures/panoptic_timeseries.png}
+\caption{Predicted versus ground-truth trajectories on the aligned
+Panoptic frames. Abduction (second panel) tracks the reference closely;
+the remaining channels do not. Ground-truth rotation is pinned at zero
+wherever the reliability gate is closed, and those frames are excluded
+from the rotation metrics rather than scored against the sentinel.}
+\label{fig:panoptic}
+\end{figure}
+
+The result is anisotropic to a degree that the macro-average conceals.
+Abduction is recovered at $6.7^\circ$ MAE with $r\approx0.98$ on both
+arms -- accurate enough to be useful -- while flexion, axial rotation and
+elbow flexion carry $31$--$64^\circ$ of error, and three of those six
+channels correlate \emph{negatively} with ground truth, meaning they
+track worse than a constant would. MPJAE of $36.1^\circ$ is the average
+of a usable channel and five unusable ones, and reporting it alone would
+misrepresent the system in both directions at once.
+
+The split has a clear geometric cause. In the torso frame, abduction is
+$\arcsin(-v_x)$, and $v_x$ is the lateral component, which a
+front-facing camera resolves in the image plane. Flexion is
+$\operatorname{atan2}(-v_z,-v_y)$ and depends on the anterior component
+$v_z$; the elbow angle is a dot product between two segment vectors, both
+with depth components; and the rotation proxy is a projection onto a
+plane whose orientation depends on the upper-arm axis. Every quantity
+that degrades is a quantity that consumes MediaPipe's pseudo-depth $z$,
+which is a learned relative-depth heuristic rather than a measurement.
+The failure is therefore a property of monocular sensing under this
+decomposition, not a defect of the solver, whose correctness on exactly
+known geometry Section~\ref{sec:results-analytic} establishes
+independently and whose ability to reproduce a commanded pose to
+$0.00^\circ$ Section~\ref{sec:unity} demonstrates.
+
+Two boundaries on this measurement should be stated plainly. It is one
+101-frame sequence with one subject and one camera, which is enough to
+demonstrate the anisotropy but not to quantify it as a population
+estimate; the harness runs the same protocol over Human3.6M's standard
+split unchanged, and doing so is the obvious next step. And the Panoptic
+subject is instrumented for a social-interaction capture rather than a
+clinical range-of-motion protocol, so the trajectory does not sweep the
+DOFs independently. Neither caveat weakens the direction of the finding:
+a channel with $r=-0.889$ is not failing by a margin that a larger or
+cleaner sample would overturn.
+
 \subsection{Deployment Note: Runtime Dependencies}
-The same verification surfaced two reproducibility hazards worth
-recording. First, \texttt{mediapipe} 1.0.1 no longer ships the legacy
+\label{sec:deps}
+The same verification surfaced reproducibility hazards worth recording,
+because in this project each one presented as a failure of something
+other than the version constraint that caused it.
+
+\texttt{mediapipe} 1.0.1 no longer ships the legacy
 \texttt{mediapipe.solutions} API, so code written against it must fall
-back to the Tasks API. Second, the Tasks API's native bindings load
+back to the Tasks API. The Tasks API's native bindings load
 \texttt{libEGL.so.1} and \texttt{libGLESv2.so.2} even for CPU-only
 inference; on a headless container lacking those system libraries,
 initialization fails with an error that names a graphics library rather
-than the actual cause. Installing \texttt{libegl1} and \texttt{libgles2}
-resolves it. Relatedly, the Tasks API requires strictly increasing frame
+than the actual cause, resolved by installing \texttt{libegl1} and
+\texttt{libgles2}. The Tasks API also requires strictly increasing frame
 timestamps, which an integer-millisecond clock violates when consecutive
 frames are processed within the same millisecond -- as happens in offline
 loops over pre-extracted frames -- so the runner enforces monotonicity
 explicitly.
+
+The constraint that matters most for reproduction is a transitive one.
+\texttt{mediapipe} 0.10.x pins \texttt{protobuf}$<5$, while
+\texttt{tensorflow} $\geq 2.20$ requires \texttt{protobuf}$\geq 5.28$ and
+2.18--2.19 permit it. An unpinned install satisfying both requirement
+lines therefore produces an environment in which MediaPipe cannot
+construct a graph at all, failing inside a C extension with a message
+about descriptor attributes that names neither package. Because
+\texttt{requirements.txt} originally bounded neither library from above,
+this state was reachable from a clean checkout. We now pin
+\texttt{tensorflow}$<2.18$ and \texttt{protobuf}$\in[4.25.3,5)$
+explicitly. Two smaller version couplings sit behind it: \texttt{jax},
+pulled in by MediaPipe, requires \texttt{ml\_dtypes}$\geq0.5$ from 0.4.35
+onward while TensorFlow 2.16 pins \texttt{ml\_dtypes}$\sim$0.3.1; and
+\texttt{setuptools}$\geq81$ removes \texttt{pkg\_resources}, which
+\texttt{tensorflow\_hub} imports at module load, disabling the MoveNet
+path with an \texttt{ImportError} that mentions neither. We record these
+because a paper that reports numbers from a pinned stack owes the reader
+the pins, and because the numbers in
+Section~\ref{sec:results-real-frame} demonstrably move when they change.
 
 \section{Discussion and Limitations}
 \label{sec:limitations}
 
 \subsection{Validation Scope}
 \label{sec:dataset-access}
-All results in Section~\ref{sec:results} are analytic checks on exactly
-known geometry, synthetic-signal benchmarks with literature-calibrated
-noise, or single-image code-path verification. None is a measurement of
-MediaPipe, MoveNet, or PoseNet accuracy on real video against 3D ground
-truth. That comparison requires Human3.6M \cite{ionescu2014human36m},
-whose registration at \url{vision.imar.ro} we did not complete, or CMU
-Panoptic Studio \cite{joo2015panoptic}, whose data server
-(\texttt{domedb.perception.cs.cmu.edu}) was unreachable from our
-development environment: both a plain GET and the HTTPS CONNECT tunnel
-returned HTTP 403 under that environment's outbound network policy, while
-other hosts remained reachable at the same time, indicating a
-host-specific block rather than a connectivity failure. We report the
-absence rather than substituting an unverified figure, because the
-distinction between a measured and an assumed error is precisely what a
-calibration reference must preserve.
+Results in Section~\ref{sec:results} fall into three tiers, and the tier
+matters more than the number. Sections~\ref{sec:results-analytic}
+through~\ref{sec:results-occlusion} are analytic checks on exactly known
+geometry and synthetic-signal benchmarks with literature-calibrated
+noise: they establish that the solver, filters, and metrics compute what
+they claim, and nothing about accuracy on real imagery.
+Section~\ref{sec:results-real-frame} is single-image code-path
+verification. Only Section~\ref{sec:results-panoptic} measures accuracy
+against real 3D ground truth, and it is the only section from which an
+error figure for this system should be quoted.
 
-The harness for that comparison is complete and shipped. With either
-dataset available, results are produced by
+An earlier draft of this paper reported that this measurement could not
+be made, on the grounds that the CMU Panoptic data server
+(\texttt{domedb.perception.cs.cmu.edu}) returned HTTP 403 to both a plain
+GET and an HTTPS CONNECT tunnel while other hosts stayed reachable,
+indicating a host-specific egress block. That conclusion was correct
+about the environment it was drawn in and wrong as a statement about the
+dataset. From an unrestricted network the same endpoints serve normally;
+the sequence used in Section~\ref{sec:results-panoptic} is roughly
+$10$~MB in total -- $0.2$~MB of \texttt{coco19} keypoints and a $9.6$~MB
+single-view HD video -- and downloads in about two minutes. We record the
+correction rather than quietly deleting the claim, because ``the data is
+unavailable'' and ``the data is unavailable \emph{to us, here}'' are
+different statements, and only the second was ever supported. Human3.6M
+\cite{ionescu2014human36m} remains behind registration at
+\url{vision.imar.ro}, which we have not completed; the harness runs it
+unchanged if that access is obtained.
+
+With either dataset available, results are produced by
 \begin{verbatim}
 python -m scripts.evaluate_h36m \
   --h36m_dir data/dataset/h3.6m/dataset \
@@ -595,12 +829,13 @@ python -m scripts.evaluate_h36m \
   --mode live \
   --frameworks mediapipe movenet_lightning posenet
 \end{verbatim}
-or, for the Panoptic substitute,
+or, for Panoptic, the invocation that produced
+Section~\ref{sec:results-panoptic},
 \begin{verbatim}
 python -m scripts.evaluate_panoptic \
-  --sequence_dir <extracted_panoptic_sequence> \
+  --sequence_dir data/panoptic/171204_pose1_sample \
   --camera 00_00 \
-  --frameworks mediapipe movenet_lightning posenet
+  --frameworks mediapipe
 \end{verbatim}
 Both run the real estimators frame by frame, compute the metrics of
 Section~\ref{sec:eval-harness}, execute the full statistical protocol,
@@ -617,7 +852,16 @@ approach zero, making flexion acutely noise-sensitive. This is an
 unavoidable coordinate pole of any two-angle parameterization of a
 direction vector -- the rotational analogue of longitude at the
 geographic poles -- and predicts degraded flexion accuracy specifically
-near full abduction, independent of tracking quality.
+near full abduction, independent of tracking quality. The pole is exact
+rather than merely ill-conditioned: at $\theta_{abd}=90^\circ$ the
+commanded flexion has no effect on the arm's direction, so posing an
+avatar at that abduction and re-deriving its angles returns abduction and
+elbow flexion exactly but flexion arbitrarily, which we observed while
+validating the reconstruction of Section~\ref{sec:unity}. The Panoptic
+sequence is consistent with the prediction: its trajectory spends
+substantial time near lateral horizontal
+(Fig.~\ref{fig:panoptic}, second panel), and flexion is among the
+worst-performing channels there.
 
 \textbf{Rotation observability.} The forearm-proxy rotation estimate is
 meaningful only above the elbow-flexion gate. Any monocular system using
@@ -625,10 +869,38 @@ a comparable proxy inherits this limit, and evaluations should report the
 fraction of frames on which the estimate was geometrically valid rather
 than an unconditional error.
 
+\textbf{Abduction domain.} Because $\theta_{abd}=\arcsin(-v_x)$, the
+abduction channel is defined only on $[-90^\circ,+90^\circ]$ and cannot
+represent an arm raised past the lateral horizontal: $170^\circ$ and
+$10^\circ$ of true abduction map to the same reported value. The solver
+never emits a value outside that band, so the ambiguity is invisible
+downstream, but any consumer reconstructing a pose from these angles --
+including the avatar path of Section~\ref{sec:unity} -- inherits it.
+
 \textbf{Depth ambiguity.} MediaPipe's pseudo-3D $z$ is a monocular
 relative-depth estimate; MoveNet and PoseNet supply no depth at all.
 Angle estimates from the latter two therefore rest more heavily on the 2D
-projection and should be expected to be more view-dependent.
+projection and should be expected to be more view-dependent. This is no
+longer a prediction: Section~\ref{sec:results-panoptic} measures it, and
+it is the dominant error term in the system. It also bounds the
+application that motivates this work. A calibration or validation
+reference for a soft exoskeleton needs error small relative to the joint
+motion being assisted; $6.7^\circ$ on abduction may qualify for coarse
+range-of-motion tracking, while $31$--$64^\circ$ on the sagittal and
+axial channels does not, and no amount of temporal filtering repairs a
+channel whose correlation with truth is negative. Recovering those
+degrees of freedom credibly requires depth the sensor does not provide --
+a second view, an RGB-D camera, or a learned 3D lifting stage evaluated
+on the same protocol -- rather than refinement of the present pipeline.
+
+\textbf{Cross-framework timing comparisons.} The harness reports
+per-framework latency, but the three estimators do not run on comparable
+runtimes: MediaPipe executes through an optimized TFLite/XNNPACK
+delegate, while MoveNet runs as a TensorFlow SavedModel through the
+generic graph executor. On our CPU this alone accounts for roughly an
+order of magnitude, so the resulting throughput figures characterize
+deployment stacks rather than model cost, and we do not report them as a
+model comparison.
 
 \textbf{Kinematic simplification.} The arm is modeled as two rigid
 segments with a one-DOF elbow and a three-DOF shoulder, one of which is
@@ -649,17 +921,38 @@ proxy, three causal filters, and a bounded-gain calibration. On a
 synthetic benchmark the two-state Kalman filter achieved $0.55^\circ$
 static deviation with no measurable step lag, and a 55-case analytic
 suite verifies the solver, frame construction, filters, calibration
-guards, and cross-framework keypoint remapping. Real-image inference
-confirms the complete path executes end to end and yields angles
-consistent with the observed pose. Accuracy against large-scale 3D
-motion-capture ground truth remains unmeasured in this work because
-neither reference dataset was reachable from our environment; the
-evaluation harness, metric definitions, statistical protocol, and
-alignment checks required for that comparison are delivered with the
-system, making it a single documented command rather than a
-reimplementation. Completing that validation, and then closing the loop
-against a physical exoskeleton's joint encoders, are the natural next
-steps.
+guards, and cross-framework keypoint remapping.
+
+Measured against real 3D motion-capture ground truth, the system's error
+is strongly anisotropic: shoulder abduction is recovered at $6.7^\circ$
+MAE with $r\approx0.98$, while flexion, axial rotation and elbow flexion
+carry $31$--$64^\circ$ of error, several with negative correlation, for a
+macro-averaged MPJAE of $36.1^\circ$. The split follows the geometry --
+the accurate channel is the one the image plane resolves, and every
+degraded channel consumes monocular pseudo-depth. We therefore conclude
+something narrower than we set out to: this pipeline is a defensible
+source of lateral arm posture for avatar control and coarse
+range-of-motion tracking, and is not yet a calibration reference for a
+wearable exoskeleton, which would require the sagittal and axial degrees
+of freedom at a fidelity single-camera depth does not supply.
+
+Two methodological findings travel with that result. A drift metric that
+sampled the wrong frames produced a clean, monotone, entirely spurious
+trend that agreed with expectation well enough to survive review, and was
+caught only by asking why it should be linear. An avatar control path
+composed of individually correct parts inverted two degrees of freedom,
+because the engine's joint parameters did not span the same basis as the
+solver's decomposition; it was caught by round-tripping a commanded pose
+back through the measurement, which now reproduces input to
+$0.00^\circ$. Both suggest that end-to-end round trips deserve the status
+usually reserved for unit tests in systems that compose a geometric
+pipeline with an engine.
+
+Extending the dataset evaluation beyond one sequence -- Human3.6M's
+standard split, more subjects, more viewpoints -- is the immediate next
+step, followed by testing whether a second view or an RGB-D sensor
+recovers the depth-dependent channels, and only then by closing the loop
+against a physical exoskeleton's joint encoders.
 
 \section*{Data and Code Availability}
 All angle-solver, filter, calibration, streaming, and evaluation code,
@@ -668,9 +961,18 @@ the Unity project, and the 55-case test suite are part of this repository
 \ref{fig:occlusion}, and \ref{fig:realframe} are regenerated by
 \texttt{python -m scripts.compare\_filters},
 \texttt{python -m src.evaluation.occlusion\_test --synthetic}, and
-\texttt{python -m scripts.verify\_real\_frame} respectively. No
-license- or registration-gated dataset was used to produce any number
-reported here. The single photograph in
+\texttt{python -m scripts.verify\_real\_frame} respectively.
+Table~\ref{tab:panoptic} and Fig.~\ref{fig:panoptic} are regenerated by
+\texttt{scripts/fetch\_panoptic\_sample.sh}, which retrieves the single
+sequence and camera used, followed by
+\texttt{python -m scripts.evaluate\_panoptic}. No registration-gated
+dataset was used to produce any number reported here: CMU Panoptic Studio
+is distributed by its maintainers as ``freely available for
+non-commercial and research purpose only'' conditional on citing a paper
+describing the dataset, satisfied here by citing
+Joo~\textit{et al.}~\cite{joo2015panoptic}, and its subjects are
+participants in that public data-collection release rather than
+participants recruited for this work. The single photograph in
 Section~\ref{sec:results-real-frame}
 (\texttt{docs/paper/figures/panoptic\_171204\_pose1\_sample\_frame50.jpg})
 is frame 50 of CMU Panoptic Studio sequence

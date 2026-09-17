@@ -8,13 +8,22 @@ using the SAME anatomical angle convention as the MonoArm vision pipeline
 
 Human3.6M Dataset Format
 --------------------------
-The public skeleton release stores each action as a plain-text file where
-each row contains 99 comma-separated floating-point values:
+Two distinct on-disk formats exist and must not be confused (the full
+discussion, and the forward-kinematics conversion, live in h36m_skeleton.py):
 
-    33 joints × 3 values per joint = 99 values
+    96 values/row — D3_Positions: 32 joints × 3 Cartesian coordinates in
+                    millimetres, world frame. Ships with the registration-
+                    gated release and pairs 1:1 with the video.
 
-The 3 values per joint are 3D Cartesian coordinates (millimetres) in the
-H3.6M global reference frame, NOT Euler angles. 
+    99 values/row — exponential map: 3 root-translation values plus 32
+                    joints × 3 axis-angle rotation vectors. This is the
+                    mirrored ``h3.6m.zip`` used by the motion-prediction
+                    literature; it has no video. These are rotations, not
+                    positions, and are converted by forward kinematics
+                    before any angle is computed.
+
+``row_to_joint_positions`` dispatches on row width, so both are accepted and
+both yield (32, 3) positions in millimetres.
 
 H3.6M Right-Arm Joint Indices (0-indexed)
 -------------------------------------------
@@ -74,8 +83,11 @@ from typing import Iterator
 
 import numpy as np
 
+from .h36m_skeleton import N_JOINTS, forward_kinematics
+from ..processing.coordinate_frame import MIN_TORSO_CONDITIONING
+
 # --------------------------------------------------------------------------
-# H3.6M arm joint indices (standard 33-joint skeleton)
+# H3.6M arm joint indices (standard 32-joint skeleton)
 # --------------------------------------------------------------------------
 H36M_RSHOULDER = 25
 H36M_RELBOW    = 26
@@ -228,8 +240,17 @@ def _compute_gt_angles(joints: np.ndarray, frame_idx: int = 0) -> GTAngles | Non
     if np.linalg.norm(y_cand) < 1e-9 or np.linalg.norm(x_cand) < 1e-9:
         return None
 
-    # Gram-Schmidt
-    x_orth = _normalize(x_cand - np.dot(x_cand, y_cand) * y_cand)
+    # Gram-Schmidt. ||x_orth|| before normalising is the sine of the angle
+    # between the shoulder axis and the spine; when that collapses the two
+    # candidates no longer span a plane and the frame degenerates into noise.
+    # Rejecting here mirrors coordinate_frame.build_torso_frame() so ground
+    # truth and predictions are discarded under identical conditions — the
+    # dropped frame becomes NaN and is excluded per-joint, never fabricated.
+    x_orth_raw = x_cand - np.dot(x_cand, y_cand) * y_cand
+    if np.linalg.norm(x_orth_raw) < MIN_TORSO_CONDITIONING:
+        return None
+
+    x_orth = _normalize(x_orth_raw)
     z_axis = _normalize(np.cross(x_orth, y_cand))
     x_axis = _normalize(np.cross(y_cand, z_axis))
 
@@ -267,13 +288,20 @@ def parse_h36m_file(txt_path: Path) -> list[GTAngles]:
     """
     Parse one H3.6M skeleton .txt file and extract right-arm GT angles.
 
-    H3.6M .txt format: one row per frame, 99 comma-separated values
-    representing 33 joints × 3 Cartesian coordinates.
+    Two on-disk row widths occur in the wild and they mean different things
+    (see h36m_skeleton.py):
+
+        96 values — D3_Positions: 32 joints × 3 Cartesian coordinates (mm),
+                    used directly.
+        99 values — exponential map: 3 root-translation values plus 32 joints
+                    × 3 axis-angle rotation vectors. These are rotations, not
+                    positions, so the row is passed through forward kinematics
+                    to recover 3D joint positions before any angle is computed.
 
     Parameters
     ----------
     txt_path : Path
-        Path to the .txt skeleton file (e.g. S1/Directions 1.txt).
+        Path to the .txt skeleton file (e.g. S1/walking_1.txt).
 
     Returns
     -------
@@ -287,20 +315,67 @@ def parse_h36m_file(txt_path: Path) -> list[GTAngles]:
     lines = txt_path.read_text(encoding="utf-8").strip().split("\n")
     for frame_idx, line in enumerate(lines):
         vals = [v.strip() for v in line.strip().split(",") if v.strip()]
-        if len(vals) < 99:
-            continue
         try:
-            joints_flat = np.array([float(v) for v in vals[:99]], dtype=np.float64)
-            joints_xyz  = joints_flat.reshape(33, 3)
-            gt = _compute_gt_angles(joints_xyz, frame_idx=frame_idx)
-            if gt is not None:
-                gt.subject = subject
-                gt.action  = action
-                results.append(gt)
-        except (ValueError, Exception):
+            row = np.array([float(v) for v in vals], dtype=np.float64)
+            joints_xyz = row_to_joint_positions(row)
+        except ValueError:
             continue
 
+        gt = _compute_gt_angles(joints_xyz, frame_idx=frame_idx)
+        if gt is not None:
+            gt.subject = subject
+            gt.action  = action
+            results.append(gt)
+
     return results
+
+
+def gt_angles_from_row(
+    row:       np.ndarray,
+    frame_idx: int = 0,
+    subject:   str = "",
+    action:    str = "",
+) -> GTAngles | None:
+    """
+    Compute ground-truth angles from one raw H3.6M row (96 or 99 values).
+
+    Returns None for degenerate skeletons, exactly as ``parse_h36m_file`` does.
+    Callers that pair ground truth with video frames must drop the paired frame
+    whenever this returns None, or the pairing silently shifts.
+    """
+    try:
+        joints_xyz = row_to_joint_positions(row)
+    except ValueError:
+        return None
+
+    gt = _compute_gt_angles(joints_xyz, frame_idx=frame_idx)
+    if gt is not None:
+        gt.subject = subject
+        gt.action  = action
+    return gt
+
+
+def row_to_joint_positions(row: np.ndarray) -> np.ndarray:
+    """
+    Turn one raw H3.6M row into (32, 3) joint positions in millimetres.
+
+    Dispatches on row width: 96 values are already Cartesian (D3_Positions),
+    99 values are exponential-map rotations and need forward kinematics.
+
+    Raises
+    ------
+    ValueError
+        If the row is neither 96 nor 99 values wide.
+    """
+    row = np.asarray(row, dtype=np.float64).ravel()
+    if row.size == 96:
+        return row.reshape(N_JOINTS, 3)
+    if row.size == 99:
+        return forward_kinematics(row)
+    raise ValueError(
+        f"unrecognised H3.6M row width {row.size}; expected 96 (D3_Positions) "
+        f"or 99 (exponential map)"
+    )
 
 
 def iter_h36m_dataset(
