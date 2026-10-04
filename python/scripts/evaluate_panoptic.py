@@ -53,7 +53,7 @@ from src.evaluation.eval_plots import (
     plot_scatter_gt, plot_error_cdf, plot_timeseries_vs_gt,
 )
 from src.pose import load_estimator
-from src.pose import angle_landmarks
+from src.pose import angle_landmarks, to_pixel_space
 from src.processing.angle_solver import compute_bilateral_angles
 from src.processing.angle_filter import BilateralFilterBank
 
@@ -79,12 +79,33 @@ def load_gt(sequence_dir: Path, max_frames: int | None) -> tuple[list[int], dict
     return frame_idx, arrays
 
 
+ANGLE_SPACES = ("world", "pixels", "normalised")
+
+
+def _angle_input(runner, lms, width: int, height: int, angle_space: str):
+    """
+    Landmarks handed to the angle solver.
+
+    ``world`` is the pipeline default (metric world landmarks when the
+    estimator provides them, else pixel-scaled keypoints). ``pixels`` and
+    ``normalised`` exist only to reproduce the input-space ablation: raw
+    normalised image coordinates are anisotropic and are never used live.
+    """
+    if angle_space == "normalised":
+        return lms
+    if angle_space == "pixels":
+        return to_pixel_space(lms, width, height)
+    return angle_landmarks(runner, lms, width, height)
+
+
 def run_live_predictions(
     sequence_dir: Path,
     camera: str,
     frame_idx: list[int],
     frameworks: list[str],
     stream_hz: float,
+    angle_space: str = "world",
+    mp_complexity: int = 1,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Run each real pose framework (both arms) on the exact frames that have GT, in order."""
     img_dir = sequence_dir / "hdImgs" / camera
@@ -93,7 +114,8 @@ def run_live_predictions(
     for fw_name in frameworks:
         print(f"\n  Running {fw_name} on {len(frame_idx)} frames...")
         try:
-            runner = load_estimator(fw_name)
+            kwargs = {"model_complexity": mp_complexity} if fw_name == "mediapipe" else {}
+            runner = load_estimator(fw_name, **kwargs)
         except Exception as e:
             print(f"  [FAIL] Could not load {fw_name}: {e}")
             continue
@@ -114,7 +136,7 @@ def run_live_predictions(
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             lms = runner.process(rgb)
             bilateral = (compute_bilateral_angles(
-                angle_landmarks(runner, lms, rgb.shape[1], rgb.shape[0]))
+                _angle_input(runner, lms, rgb.shape[1], rgb.shape[0], angle_space))
                 if lms is not None else None)
             filt_bilateral = filt.update(bilateral) if bilateral is not None else None
 
@@ -155,6 +177,11 @@ def main() -> None:
     ap.add_argument("--stream_hz", type=float, default=29.97,
                      help="Panoptic HD capture rate (used for the Kalman filter dt)")
     ap.add_argument("--output_dir", default="outputs/validation_panoptic")
+    ap.add_argument("--angle_space", choices=ANGLE_SPACES, default="world",
+                     help="Landmarks the angles are computed from (default: world; "
+                          "pixels/normalised reproduce the input-space ablation)")
+    ap.add_argument("--mp_complexity", type=int, choices=(0, 1, 2), default=1,
+                     help="MediaPipe model: 0 lite, 1 full (default), 2 heavy")
     args = ap.parse_args()
 
     sequence_dir = Path(args.sequence_dir)
@@ -169,6 +196,7 @@ def main() -> None:
 
     pred_raw = run_live_predictions(
         sequence_dir, args.camera, frame_idx, args.frameworks, args.stream_hz,
+        angle_space=args.angle_space, mp_complexity=args.mp_complexity,
     )
     if not pred_raw:
         print("[FAIL] No framework produced predictions.")
@@ -223,6 +251,8 @@ def main() -> None:
         json.dump({
             "alignment": {k: v for k, v in align.items()},
             "n_frames_aligned": n_aligned,
+            "config": {"angle_space": args.angle_space,
+                       "mp_complexity": args.mp_complexity},
             "results": metrics_to_dict(all_results),
         }, f, indent=2)
     print(f"[OK] JSON metrics -> {json_path}")

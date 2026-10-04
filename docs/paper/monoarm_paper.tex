@@ -56,21 +56,27 @@ all configurations meet the $\pm3$--$5^\circ$ static-pose target. A
 55-case analytic test suite verifies the angle solver against closed-form
 reference poses, torso-frame orthonormality, filter dynamics, and
 cross-framework keypoint remapping. We then measure accuracy against real
-3D motion-capture ground truth on a CMU Panoptic Studio sequence, and the
-result is strongly anisotropic: shoulder abduction, which is carried by
-the image-plane projection, attains $6.7^\circ$ MAE with Pearson
-$r=0.98$, while every degree of freedom that depends on monocular depth
-degrades severely -- flexion $46.2^\circ$, axial rotation $30.9^\circ$,
-and elbow flexion $40.6^\circ$ MAE, the last with negative correlation --
-for a macro-averaged MPJAE of $36.1^\circ$. We report this negative
-result in full because it bounds the claim the method can support: a
-single RGB camera recovers the lateral component of arm posture well
-enough for avatar control or coarse range-of-motion tracking, but not the
-sagittal and axial components at the fidelity a calibration reference for
-a wearable exoskeleton would demand. We additionally document a class of
-integration error this evaluation exposed, in which the avatar control
-path silently inverted two degrees of freedom while every upstream
-component tested correct.
+3D motion-capture ground truth on a CMU Panoptic Studio sequence.
+Computed from MediaPipe's normalized image landmarks, the error is
+strongly anisotropic: shoulder abduction, which the image plane carries,
+attains $5$--$8^\circ$ MAE with Pearson $r\geq0.97$, while flexion,
+axial rotation and elbow flexion carry $33$--$64^\circ$ of error, three
+channels with negative correlation, for a macro-averaged MPJAE of
+$36.4^\circ$. An input-space ablation shows that most of this failure is
+an artifact of that input rather than of monocular sensing: applying the
+identical decomposition to the same network's metric world landmarks
+halves MPJAE to $18.3^\circ$ and moves both elbows from $r=-0.23$ and
+$-0.85$ to $r=0.96$, whereas correcting the image aspect ratio alone does
+not help. Flexion near the decomposition's singularity at $90^\circ$
+abduction and left axial rotation remain unreliable, so the pipeline is a
+usable source of abduction and elbow flexion for avatar control and
+coarse range-of-motion tracking, but not yet the axial-rotation reference
+a wearable exoskeleton would demand. We additionally document two classes
+of integration error the evaluation exposed: an avatar control path that
+silently inverted two degrees of freedom while every upstream component
+tested correct, and a torso frame built with a right-handed cross product
+inside a left-handed engine, which mirrored the avatar's sagittal plane
+while a self-consistent round trip reported zero error.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -128,15 +134,18 @@ poses the avatar by analytically inverting the same decomposition, rather
 than by mapping each angle onto a like-named engine parameter
 (Section~\ref{sec:unity}).
 \item A dataset-backed accuracy measurement against real 3D
-motion-capture ground truth showing that monocular error is strongly
-anisotropic by degree of freedom -- accurate in the image plane,
-unreliable in depth -- and an argument that macro-averaged MPJAE hides
-exactly this structure (Section~\ref{sec:results-panoptic}).
-\item An account of two error classes that unit-level correctness does
+motion-capture ground truth, with an input-space ablation showing that
+the depth-dependent failure seen with image-space keypoints is largely an
+artifact of that input -- metric world landmarks halve the error and turn
+negatively correlated channels positive -- and an argument that
+macro-averaged MPJAE hides exactly this structure
+(Section~\ref{sec:results-panoptic}).
+\item An account of three error classes that unit-level correctness does
 not catch: an evaluation metric that appeared to show a clean linear
 trend while measuring the wrong frames, and an avatar control path that
 inverted two degrees of freedom while every component it composed tested
-correct in isolation (Sections~\ref{sec:results-occlusion},
+correct in isolation, and an engine-handedness mirror that a
+self-consistent round trip cannot see (Sections~\ref{sec:results-occlusion},
 \ref{sec:unity}).
 \end{enumerate}
 
@@ -210,6 +219,13 @@ basis:
 \hat{\mathbf{z}} &= \operatorname{norm}(\mathbf{x}' \times \hat{\mathbf{y}}) \\
 \hat{\mathbf{x}} &= \operatorname{norm}(\hat{\mathbf{y}} \times \hat{\mathbf{z}}). &&
 \end{align}
+The landmarks entering this construction must share one unit on all three
+axes. MediaPipe's normalized image landmarks do not: $x$ is divided by
+the image width, $y$ by its height, and $z$ is a learned relative depth
+whose scale is not tied to either. The pipeline therefore uses the
+network's metric world landmarks (hip-centered, in meters) and, for the
+2D-only estimators, keypoints rescaled to pixels;
+Section~\ref{sec:results-panoptic} measures what this choice is worth.
 This yields a right-handed frame
 $R = [\hat{\mathbf{x}}\;\hat{\mathbf{y}}\;\hat{\mathbf{z}}]$ with
 $\hat{\mathbf{x}}$ lateral (toward the subject's left),
@@ -353,7 +369,7 @@ direction in torso coordinates is recovered in closed form,
 \begin{equation}
 \mathbf{v} = \bigl(-\sin\theta_{abd},\;
 -\cos\theta_{abd}\cos\theta_{flex},\;
--\cos\theta_{abd}\sin\theta_{flex}\bigr),
+\cos\theta_{abd}\sin\theta_{flex}\bigr),
 \label{eq:inverse}
 \end{equation}
 and the forearm is placed at $\theta_{elbow}$ from that axis, swung about
@@ -367,6 +383,24 @@ than by fitting. Feeding known quadruples through the transport,
 posing the rig, and re-deriving the angles from the resulting bone
 positions reproduces the input to $0.00^\circ$ across eight poses
 spanning the workspace, on both arms.
+
+That round trip has a blind spot worth recording, because it hid a third
+error. The avatar-side torso frame was built with the same cross product
+as the Python one, $\hat{\mathbf{z}}=\mathbf{x}'\times\hat{\mathbf{y}}$,
+but Unity's world is left-handed, so in the engine that product points
+\emph{behind} the avatar. Composed with the forward solver's original
+flexion sign, which was itself inverted, the posed arm reached backward
+for a forward reach and bent forward-flexed elbows backward -- yet
+re-decomposing the posed rig in the same mirrored frame returned the
+commanded angles exactly, because a reflection applied on both legs of a
+round trip cancels. Building the engine-side frame as
+$\hat{\mathbf{z}}=\hat{\mathbf{y}}\times\mathbf{x}'$, which is anterior in
+a left-handed system, and correcting the solver's sign makes torso-frame
+coordinates numerically identical on both sides. We verified the composed
+path by driving a forward reach and a forward-bent, internally rotated
+forearm through a numerical model of the engine-side reconstruction and
+checking the resulting directions against anatomy rather than against the
+round trip; confirming the same on the rendered rig is outstanding.
 
 Two consequences follow from bypassing muscle space and are stated
 because they are load-bearing for anyone reusing this path. Rotations
@@ -667,38 +701,59 @@ substitution occurs anywhere in this experiment.
 
 Video and reconstruction are separate Panoptic pipelines with no
 guaranteed common start frame, so the harness estimates the offset by
-cross-correlation before scoring. It recovers a $-10$ frame shift at
-$r=0.982$, and the two arms agree on that shift independently, leaving
-$n=91$ aligned frames. Axial rotation is scored only on frames where each
+cross-correlation before scoring, independently for each configuration
+reported below. For the world-landmark configuration it recovers a $-11$
+frame shift at $r=0.962$, leaving $n=90$ aligned frames ($-9$ and $n=92$
+for the image-space configuration). Axial rotation is scored only on frames where each
 side's own ground-truth reliability gate is satisfied, so the $25^\circ$
 elbow criterion of Section~\ref{sec:angles} is applied to the reference
 rather than to the prediction.
 
 \begin{table}[t]
 \centering
-\caption{Per-DOF accuracy against CMU Panoptic 3D ground truth
-($n=91$ aligned frames, real MediaPipe inference). Degrees of freedom
-carried by the image-plane projection are separated from those requiring
-monocular depth.}
+\caption{Per-DOF accuracy against CMU Panoptic 3D ground truth (real
+MediaPipe Full-model inference). \emph{Image space}: the decomposition
+applied to normalized image landmarks ($n=92$ aligned frames).
+\emph{World}: the same decomposition applied to the network's metric
+world landmarks ($n=90$), the configuration the pipeline uses.}
 \label{tab:panoptic}
-\begin{tabular}{@{}llccc@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
- & DOF & MAE (\textdegree) & RMSE (\textdegree) & $r$ \\
+ & \multicolumn{2}{c}{Image space} & \multicolumn{2}{c}{World landmarks} \\
+\cmidrule(lr){2-3}\cmidrule(l){4-5}
+DOF & MAE (\textdegree) & $r$ & MAE (\textdegree) & $r$ \\
 \midrule
-\multirow{2}{*}{In-plane}
- & Abduction (R)        & \textbf{6.65}  & 8.53  & \textbf{0.982} \\
- & Abduction (L)        & \textbf{6.73}  & 9.11  & \textbf{0.969} \\
+Abduction (R)  & 7.88  & 0.983    & 7.41           & 0.962 \\
+Abduction (L)  & 5.35  & 0.971    & 12.23          & 0.959 \\
+Flexion (R)    & 42.42 & 0.795    & 39.02          & 0.637 \\
+Flexion (L)    & 63.50 & $-0.430$ & \textbf{17.00} & \textbf{0.948} \\
+Rotation (R)   & 33.07 & 0.829    & \textbf{13.29} & 0.765 \\
+Rotation (L)   & 48.42 & 0.494    & \textbf{19.75} & $-0.182$ \\
+Elbow (R)      & 42.48 & $-0.233$ & \textbf{17.25} & \textbf{0.965} \\
+Elbow (L)      & 48.12 & $-0.852$ & \textbf{20.12} & \textbf{0.962} \\
 \midrule
-\multirow{6}{*}{Depth-dep.}
- & Flexion (R)          & 46.22 & 67.88 & 0.753 \\
- & Flexion (L)          & 64.42 & 87.05 & $-0.379$ \\
- & Rotation (R)         & 30.88 & 33.43 & 0.831 \\
- & Rotation (L)         & 47.07 & 58.57 & 0.496 \\
- & Elbow (R)            & 40.61 & 44.42 & $-0.207$ \\
- & Elbow (L)            & 46.50 & 48.53 & $-0.889$ \\
+MPJAE / mean $r$ & 36.40 & 0.320 & \textbf{18.26} & \textbf{0.752} \\
+PCK@$5^\circ$ / @$10^\circ$ & \multicolumn{2}{c}{20.6\% / 84.8\%}
+                            & \multicolumn{2}{c}{20.5\% / 63.3\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[t]
+\centering
+\caption{Input-space ablation on the same sequence: MPJAE (\textdegree) /
+mean $r$ for the MediaPipe Lite and Full models, each configuration
+aligned independently. Repeated runs vary by up to $0.2^\circ$ MPJAE
+because the landmarker's video mode timestamps frames from the wall
+clock.}
+\label{tab:panoptic-ablation}
+\begin{tabular}{@{}lcc@{}}
+\toprule
+Angles computed from & Lite & Full \\
 \midrule
-\multicolumn{2}{@{}l}{MPJAE (macro-average)} & 36.14 & 44.69 & 0.319 \\
-\multicolumn{2}{@{}l}{PCK@$5^\circ$ / @$10^\circ$} & \multicolumn{3}{c}{21.7\% / 79.1\%} \\
+Normalized image landmarks         & 25.27 / 0.628 & 36.40 / 0.320 \\
+Image landmarks rescaled to pixels & 27.47 / 0.463 & 35.42 / 0.225 \\
+Metric world landmarks             & 38.93 / 0.554 & \textbf{18.26} / \textbf{0.752} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -706,37 +761,60 @@ monocular depth.}
 \begin{figure}[t]
 \centering
 \includegraphics[width=\linewidth]{figures/panoptic_timeseries.png}
-\caption{Predicted versus ground-truth trajectories on the aligned
-Panoptic frames. Abduction (second panel) tracks the reference closely;
-the remaining channels do not. Ground-truth rotation is pinned at zero
-wherever the reliability gate is closed, and those frames are excluded
-from the rotation metrics rather than scored against the sentinel.}
+\caption{Predicted (world landmarks, Full model) versus ground-truth
+trajectories for the right arm on the aligned Panoptic frames. Abduction
+(second panel) tracks the reference closely and elbow flexion (fourth)
+follows the motion but under-reaches its final excursion. The flexion
+reference (first panel) sweeps through $\pm180^\circ$ while abduction is
+near $90^\circ$, where the decomposition is singular. Ground-truth
+rotation is pinned at zero wherever the reliability gate is closed, and
+those frames are excluded from the rotation metrics rather than scored
+against the sentinel.}
 \label{fig:panoptic}
 \end{figure}
 
-The result is anisotropic to a degree that the macro-average conceals.
-Abduction is recovered at $6.7^\circ$ MAE with $r\approx0.98$ on both
-arms -- accurate enough to be useful -- while flexion, axial rotation and
-elbow flexion carry $31$--$64^\circ$ of error, and three of those six
-channels correlate \emph{negatively} with ground truth, meaning they
-track worse than a constant would. MPJAE of $36.1^\circ$ is the average
-of a usable channel and five unusable ones, and reporting it alone would
-misrepresent the system in both directions at once.
+Computed from the normalized image landmarks -- the input of our first
+implementation -- the result is anisotropic to a degree the macro-average
+conceals. Abduction is recovered at $5$--$8^\circ$ MAE with $r\geq0.97$,
+while flexion, axial rotation and elbow flexion carry $33$--$64^\circ$ of
+error and three channels correlate \emph{negatively} with ground truth,
+tracking worse than a constant would. In the torso frame abduction is
+$\arcsin(-v_x)$, and $v_x$ is resolved in the image plane; every
+degraded quantity consumes the anterior component, which in that input is
+MediaPipe's image-plane pseudo-depth $z$.
 
-The split has a clear geometric cause. In the torso frame, abduction is
-$\arcsin(-v_x)$, and $v_x$ is the lateral component, which a
-front-facing camera resolves in the image plane. Flexion is
-$\operatorname{atan2}(v_z,-v_y)$ and depends on the anterior component
-$v_z$; the elbow angle is a dot product between two segment vectors, both
-with depth components; and the rotation proxy is a projection onto a
-plane whose orientation depends on the upper-arm axis. Every quantity
-that degrades is a quantity that consumes MediaPipe's pseudo-depth $z$,
-which is a learned relative-depth heuristic rather than a measurement.
-The failure is therefore a property of monocular sensing under this
-decomposition, not a defect of the solver, whose correctness on exactly
-known geometry Section~\ref{sec:results-analytic} establishes
-independently and whose ability to reproduce a commanded pose to
-$0.00^\circ$ Section~\ref{sec:unity} demonstrates.
+That pattern invites the conclusion that the depth channels are beyond
+monocular sensing. Table~\ref{tab:panoptic-ablation} shows the conclusion
+would be wrong. Normalized image landmarks are a poor input to a 3D
+decomposition for two separate reasons: $x$ and $y$ are scaled by
+different image dimensions, and $z$ is a relative-depth estimate whose
+scale is not tied to either. Correcting only the first (rescaling to
+pixels) does not help. Replacing the input with the network's metric
+world landmarks -- a hip-centered 3D skeleton in meters regressed by the
+same model -- halves MPJAE to $18.3^\circ$ and raises mean $r$ from
+$0.32$ to $0.75$: both elbows move from $r=-0.23$ and $-0.85$ to $0.96$,
+left flexion from $-0.43$ to $0.95$, and right rotation error falls from
+$33.1^\circ$ to $13.3^\circ$. The same substitution makes the Lite model
+worse, so the gain belongs to the Full model's 3D output rather than to
+the input space alone; the pipeline therefore uses the Full model by
+default.
+
+What remains is narrower and has identifiable causes. Right-shoulder
+flexion ($39.0^\circ$ MAE, RMSE $62.7^\circ$) is dominated by the part of
+the sequence in which the right arm is held near $90^\circ$ of
+abduction: there $v_y$ and $v_z$ both approach zero, the decomposition is
+singular, and the \emph{ground-truth} flexion itself sweeps through
+$\pm180^\circ$ (Fig.~\ref{fig:panoptic}, first panel) -- a property of
+the angle definition (Section~\ref{sec:limitations}), not of the sensor.
+Left axial rotation still does not correlate with truth ($r=-0.18$,
+scored only on frames the reliability gate admits). Elbow flexion follows
+the shape of the motion but under-reaches its largest excursions, which
+accounts for most of its remaining $17$--$20^\circ$ MAE. Abduction, which
+was already carried by the image plane, gains nothing and loses precision
+on the left arm ($5.4\to12.2^\circ$), where world-landmark depth noise
+now enters a channel that previously consumed none. The solver itself is
+not in question: Section~\ref{sec:results-analytic} establishes its
+correctness on exactly known geometry independently.
 
 Two boundaries on this measurement should be stated plainly. It is one
 101-frame sequence with one subject and one camera, which is enough to
@@ -745,9 +823,10 @@ estimate; the harness runs the same protocol over Human3.6M's standard
 split unchanged, and doing so is the obvious next step. And the Panoptic
 subject is instrumented for a social-interaction capture rather than a
 clinical range-of-motion protocol, so the trajectory does not sweep the
-DOFs independently. Neither caveat weakens the direction of the finding:
-a channel with $r=-0.889$ is not failing by a margin that a larger or
-cleaner sample would overturn.
+DOFs independently. The ablation is the stronger caution: on this one
+sequence a change of input space moved the macro error by a factor of
+two, so these numbers should be read as evidence about mechanisms rather
+than as population estimates.
 
 \subsection{Deployment Note: Runtime Dependencies}
 \label{sec:deps}
@@ -880,18 +959,19 @@ including the avatar path of Section~\ref{sec:unity} -- inherits it.
 \textbf{Depth ambiguity.} MediaPipe's pseudo-3D $z$ is a monocular
 relative-depth estimate; MoveNet and PoseNet supply no depth at all.
 Angle estimates from the latter two therefore rest more heavily on the 2D
-projection and should be expected to be more view-dependent. This is no
-longer a prediction: Section~\ref{sec:results-panoptic} measures it, and
-it is the dominant error term in the system. It also bounds the
-application that motivates this work. A calibration or validation
-reference for a soft exoskeleton needs error small relative to the joint
-motion being assisted; $6.7^\circ$ on abduction may qualify for coarse
-range-of-motion tracking, while $31$--$64^\circ$ on the sagittal and
-axial channels does not, and no amount of temporal filtering repairs a
-channel whose correlation with truth is negative. Recovering those
-degrees of freedom credibly requires depth the sensor does not provide --
-a second view, an RGB-D camera, or a learned 3D lifting stage evaluated
-on the same protocol -- rather than refinement of the present pipeline.
+projection and should be expected to be more view-dependent. Section~\ref{sec:results-panoptic} measures how much this matters and,
+more usefully, where it enters: consuming the image-plane $z$ directly
+produced negative correlations on three channels, whereas the network's
+metric world landmarks recover elbow flexion and left flexion at
+$r\approx0.95$. The remaining errors still bound the application that
+motivates this work. A calibration or validation reference for a soft
+exoskeleton needs error small relative to the joint motion being
+assisted; $17$--$20^\circ$ elbow MAE at $r=0.96$ may serve coarse
+range-of-motion tracking, while an uncorrelated axial-rotation channel
+does not, and no temporal filter repairs a channel that does not track
+truth. Closing that gap plausibly needs depth the sensor does not
+measure -- a second view, an RGB-D camera, or a dedicated 3D lifting
+stage evaluated on the same protocol.
 
 \textbf{Cross-framework timing comparisons.} The harness reports
 per-framework latency, but the three estimators do not run on comparable
@@ -923,20 +1003,23 @@ static deviation with no measurable step lag, and a 55-case analytic
 suite verifies the solver, frame construction, filters, calibration
 guards, and cross-framework keypoint remapping.
 
-Measured against real 3D motion-capture ground truth, the system's error
-is strongly anisotropic: shoulder abduction is recovered at $6.7^\circ$
-MAE with $r\approx0.98$, while flexion, axial rotation and elbow flexion
-carry $31$--$64^\circ$ of error, several with negative correlation, for a
-macro-averaged MPJAE of $36.1^\circ$. The split follows the geometry --
-the accurate channel is the one the image plane resolves, and every
-degraded channel consumes monocular pseudo-depth. We therefore conclude
-something narrower than we set out to: this pipeline is a defensible
-source of lateral arm posture for avatar control and coarse
-range-of-motion tracking, and is not yet a calibration reference for a
-wearable exoskeleton, which would require the sagittal and axial degrees
-of freedom at a fidelity single-camera depth does not supply.
+Measured against real 3D motion-capture ground truth, the
+decomposition's accuracy depends decisively on its input. From normalized
+image landmarks the error is strongly anisotropic -- abduction at
+$5$--$8^\circ$ MAE with $r\geq0.97$; flexion, axial rotation and elbow
+flexion at $33$--$64^\circ$ with three negative correlations; MPJAE
+$36.4^\circ$. From the same network's metric world landmarks MPJAE halves
+to $18.3^\circ$ and both elbows reach $r=0.96$. We therefore conclude
+something different from what the image-space result alone suggested:
+monocular depth is not uniformly unusable for this task, but its value is
+set by how the network's 3D estimate is consumed. The pipeline is a
+defensible source of abduction and elbow flexion for avatar control and
+coarse range-of-motion tracking; it is not yet a calibration reference
+for a wearable exoskeleton, which would additionally require axial
+rotation, and flexion near full abduction, at a fidelity this sequence
+does not show.
 
-Two methodological findings travel with that result. A drift metric that
+Three methodological findings travel with that result. A drift metric that
 sampled the wrong frames produced a clean, monotone, entirely spurious
 trend that agreed with expectation well enough to survive review, and was
 caught only by asking why it should be linear. An avatar control path
@@ -944,9 +1027,15 @@ composed of individually correct parts inverted two degrees of freedom,
 because the engine's joint parameters did not span the same basis as the
 solver's decomposition; it was caught by round-tripping a commanded pose
 back through the measurement, which now reproduces input to
-$0.00^\circ$. Both suggest that end-to-end round trips deserve the status
-usually reserved for unit tests in systems that compose a geometric
-pipeline with an engine.
+$0.00^\circ$ -- yet the same round trip was blind to a mirrored
+engine-side torso frame, because a reflection applied on both of its legs
+cancels; only checking rendered directions against anatomy exposed it.
+And the depth channels looked unusable until the input space was varied,
+which is the third finding: a negative result is only as strong as the
+alternatives it was tested against. Together these suggest that
+end-to-end round trips deserve the status usually reserved for unit tests
+in systems that compose a geometric pipeline with an engine, provided at
+least one leg is checked against an external reference.
 
 Extending the dataset evaluation beyond one sequence -- Human3.6M's
 standard split, more subjects, more viewpoints -- is the immediate next
@@ -965,7 +1054,9 @@ the Unity project, and the 55-case test suite are part of this repository
 Table~\ref{tab:panoptic} and Fig.~\ref{fig:panoptic} are regenerated by
 \texttt{scripts/fetch\_panoptic\_sample.sh}, which retrieves the single
 sequence and camera used, followed by
-\texttt{python -m scripts.evaluate\_panoptic}. No registration-gated
+\texttt{python -m scripts.evaluate\_panoptic}; Table~\ref{tab:panoptic-ablation}
+adds \texttt{--mp\_complexity \{0,1\}} and
+\texttt{--angle\_space \{normalised,pixels,world\}}. No registration-gated
 dataset was used to produce any number reported here: CMU Panoptic Studio
 is distributed by its maintainers as ``freely available for
 non-commercial and research purpose only'' conditional on citing a paper
