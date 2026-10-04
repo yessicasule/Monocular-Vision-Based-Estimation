@@ -1,0 +1,42 @@
+# Pose Estimation Benchmarking Dependencies
+
+# Core dependencies
+# mediapipe 1.x drops the legacy Solutions API; 0.10.x pins protobuf<5, which
+# is what bounds tensorflow and numpy below.
+mediapipe>=0.10.9,<1.0
+opencv-python>=4.8.1
+numpy>=1.26,<2
+pandas>=2.0
+matplotlib>=3.7
+psutil>=5.9
+Pillow>=10.0
+pyyaml
+scipy
+
+# Structured result export (Excel workbooks)
+openpyxl>=3.1
+
+# Reads Human3.6M D3_Positions .cdf pose files (scripts/prepare_h36m.py).
+# Only needed to prepare the registration-gated video release; see
+# docs/DATA_H36M.md.
+cdflib>=1.2
+
+# TensorFlow for MoveNet.
+# <2.18 is required: 2.18/2.19 allow protobuf 5.x and 2.20+ require it, either
+# of which breaks mediapipe's protobuf<5 pin with an opaque C-extension error.
+tensorflow>=2.14,<2.18
+tensorflow-hub>=0.15
+protobuf>=4.25.3,<5
+
+# TFLite runtime for PoseNet (tf.lite.Interpreter is broken/deprecated in TF>=2.20)
+ai-edge-litert>=2.1
+
+# Web dashboard (scripts/run_web.py): HTTP control plane + WebSocket data plane
+fastapi>=0.110
+uvicorn[standard]>=0.27
+websockets>=12.0
+python-multipart>=0.0.9
+
+# Optional: for motion capture integration
+# pyopenni2>=1.0  # For Kinect/PrimeSense sensors
+# vicon-sdk>=2.0  # For Vicon motion capture

@@ -1,0 +1,230 @@
+{
+  "n_arm_observations": 60,
+  "n_poses_undetected": 0,
+  "seed": 42,
+  "resolution": 640,
+  "cycles_samples": 16,
+  "stage1_harness_verification": {
+    "description": "solver on IDEAL landmarks projected from exact 3D truth; non-zero error here would indicate a harness/convention bug",
+    "all": {
+      "per_dof": {
+        "shoulder_flexion": {
+          "n": 60,
+          "mae_deg": 2.875395049321553,
+          "rmse_deg": 3.977441738201223,
+          "p90_abs_err_deg": 7.203472629344218
+        },
+        "shoulder_abduction": {
+          "n": 60,
+          "mae_deg": 0.683378815878028,
+          "rmse_deg": 0.9285063368538125,
+          "p90_abs_err_deg": 1.268144278398728
+        },
+        "shoulder_rotation": {
+          "n": 44,
+          "mae_deg": 6.639309389022227,
+          "rmse_deg": 26.062600976725566,
+          "p90_abs_err_deg": 4.809476224754985
+        },
+        "elbow_flexion": {
+          "n": 60,
+          "mae_deg": 2.1448392617026992,
+          "rmse_deg": 2.751365623968817,
+          "p90_abs_err_deg": 4.737971256122086
+        }
+      },
+      "mpjae_deg": 3.085730628981127
+    },
+    "well_conditioned": {
+      "per_dof": {
+        "shoulder_flexion": {
+          "n": 42,
+          "mae_deg": 1.889602960973832,
+          "rmse_deg": 2.8512161751821674,
+          "p90_abs_err_deg": 4.670500683008333
+        },
+        "shoulder_abduction": {
+          "n": 42,
+          "mae_deg": 0.67936965434005,
+          "rmse_deg": 0.9722902150008403,
+          "p90_abs_err_deg": 1.2550526166142248
+        },
+        "shoulder_rotation": {
+          "n": 31,
+          "mae_deg": 8.39008097700514,
+          "rmse_deg": 30.97413187900439,
+          "p90_abs_err_deg": 4.106653962465458
+        },
+        "elbow_flexion": {
+          "n": 42,
+          "mae_deg": 2.42664358866751,
+          "rmse_deg": 3.071202406337593,
+          "p90_abs_err_deg": 5.295843772563966
+        }
+      },
+      "mpjae_deg": 3.3464242952466328
+    }
+  },
+  "stage2_render_domain": {
+    "publication_grade": false,
+    "caveat": "Rendered untextured mannequin. NOT an estimate of real-world accuracy and must not be reported as one; characterises the rendering domain gap. Use evaluate_panoptic.py on real footage.",
+    "all": {
+      "per_dof": {
+        "shoulder_flexion": {
+          "n": 60,
+          "mae_deg": 42.30724141867009,
+          "rmse_deg": 54.897324895602026,
+          "p90_abs_err_deg": 97.35764493454172
+        },
+        "shoulder_abduction": {
+          "n": 60,
+          "mae_deg": 24.684209499848695,
+          "rmse_deg": 34.732845531280695,
+          "p90_abs_err_deg": 51.35885865120997
+        },
+        "shoulder_rotation": {
+          "n": 44,
+          "mae_deg": 103.55753869724089,
+          "rmse_deg": 118.70536769703955,
+          "p90_abs_err_deg": 165.69713947317481
+        },
+        "elbow_flexion": {
+          "n": 60,
+          "mae_deg": 39.02758071513313,
+          "rmse_deg": 47.04178990444178,
+          "p90_abs_err_deg": 73.95635142531995
+        }
+      },
+      "mpjae_deg": 52.3941425827232
+    },
+    "in_plane": {
+      "per_dof": {
+        "shoulder_flexion": {
+          "n": 50,
+          "mae_deg": 41.12477851327591,
+          "rmse_deg": 53.9667415191388,
+          "p90_abs_err_deg": 85.14112369311201
+        },
+        "shoulder_abduction": {
+          "n": 50,
+          "mae_deg": 26.299513556470416,
+          "rmse_deg": 36.61238877232975,
+          "p90_abs_err_deg": 51.40321008689418
+        },
+        "shoulder_rotation": {
+          "n": 36,
+          "mae_deg": 101.46121211454681,
+          "rmse_deg": 117.98162242110507,
+          "p90_abs_err_deg": 166.43397338828441
+        },
+        "elbow_flexion": {
+          "n": 50,
+          "mae_deg": 38.21941748297453,
+          "rmse_deg": 45.517534648974966,
+          "p90_abs_err_deg": 73.75579535979892
+        }
+      },
+      "mpjae_deg": 51.77623041681692
+    },
+    "in_plane_well_conditioned": {
+      "per_dof": {
+        "shoulder_flexion": {
+          "n": 42,
+          "mae_deg": 35.28195784873141,
+          "rmse_deg": 46.49131674921473,
+          "p90_abs_err_deg": 73.76602575394155
+        },
+        "shoulder_abduction": {
+          "n": 42,
+          "mae_deg": 20.959639793520182,
+          "rmse_deg": 27.745049119067044,
+          "p90_abs_err_deg": 43.243916587443344
+        },
+        "shoulder_rotation": {
+          "n": 31,
+          "mae_deg": 102.55499488633602,
+          "rmse_deg": 120.04401581012047,
+          "p90_abs_err_deg": 166.9364152218982
+        },
+        "elbow_flexion": {
+          "n": 42,
+          "mae_deg": 39.49834794686545,
+          "rmse_deg": 46.868686147292685,
+          "p90_abs_err_deg": 73.46506243112809
+        }
+      },
+      "mpjae_deg": 49.57373511886327
+    },
+    "in_plane_near_singular": {
+      "per_dof": {
+        "shoulder_flexion": {
+          "n": 8,
+          "mae_deg": 71.79958700213454,
+          "rmse_deg": 82.79483160235063,
+          "p90_abs_err_deg": 121.88637757041795
+        },
+        "shoulder_abduction": {
+          "n": 8,
+          "mae_deg": 54.33385081195913,
+          "rmse_deg": 65.85235858987349,
+          "p90_abs_err_deg": 98.93257981362535
+        },
+        "shoulder_rotation": {
+          "n": 5,
+          "mae_deg": 94.67975892945364,
+          "rmse_deg": 104.28838723630683,
+          "p90_abs_err_deg": 140.23820948006951
+        },
+        "elbow_flexion": {
+          "n": 8,
+          "mae_deg": 31.505032547547188,
+          "rmse_deg": 37.636420022280234,
+          "p90_abs_err_deg": 56.648696319258526
+        }
+      },
+      "mpjae_deg": 63.079557322773624
+    },
+    "landmark_px_error": {
+      "l_sh": {
+        "median": 16.30834064451236,
+        "mean": 28.1976673224135,
+        "p90": 69.46175514061193
+      },
+      "r_sh": {
+        "median": 12.458132483738819,
+        "mean": 26.5481971515899,
+        "p90": 77.18373548265517
+      },
+      "l_el": {
+        "median": 34.17104964623724,
+        "mean": 58.91853558424751,
+        "p90": 161.889989200404
+      },
+      "r_el": {
+        "median": 8.88358844884004,
+        "mean": 46.95413919742547,
+        "p90": 150.62275475695924
+      },
+      "l_wr": {
+        "median": 36.59702817584202,
+        "mean": 74.76345574802677,
+        "p90": 266.6395395147229
+      },
+      "r_wr": {
+        "median": 8.84727590318036,
+        "mean": 69.18607484788504,
+        "p90": 240.61651958814758
+      },
+      "l_hip": {
+        "median": 5.986354303053246,
+        "mean": 11.003069494161585,
+        "p90": 27.09005160381644
+      },
+      "r_hip": {
+        "median": 5.495234949710327,
+        "mean": 11.521315792707686,
+        "p90": 31.609672593612313
+      }
+    }
+  }
+}

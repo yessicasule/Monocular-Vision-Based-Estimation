@@ -1,106 +1,35 @@
-# ── Python ────────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
-*.py[cod]
-*$py.class
-*.pyo
-
-# virtual environments
+*.pyc
 .venv/
-venv/
-env/
-ENV/
-.env
-.env.*
-
-# build / packaging
-build/
-dist/
 *.egg-info/
-.eggs/
-pip-log.txt
-pip-delete-this-directory.txt
-MANIFEST
 
-# test / lint caches
-.pytest_cache/
-.coverage
-htmlcov/
-.mypy_cache/
-.tox/
-.nox/
-.ruff_cache/
-
-# Jupyter
-.ipynb_checkpoints/
-
-# ── Node / npm ─────────────────────────────────────────────────────────────────
-node_modules/
-package-lock.json
-yarn.lock
-.npm/
-.yarn/
-*.tsbuildinfo
-
-# ── TensorFlow / ML ───────────────────────────────────────────────────────────
-*.h5
-*.pb
-*.tflite
-*.ckpt
-*.ckpt.*
-saved_model/
-tf_data/
-tensorflow_datasets/
-PoseTrack/models/
-
-# ── Project data & outputs ────────────────────────────────────────────────────
+# Generated outputs (regenerate via scripts/*)
+python/outputs/
+python/data/
+python/.venv/
 PoseTrack/data/
 PoseTrack/outputs/
 PoseTrack/benchmarks/results/
-**/frames/
-
-# legacy
-PoseTrack/legacy/
-
-# ── Unity ─────────────────────────────────────────────────────────────────────
-# Generated
-[Ll]ibrary/
-[Ll]ogs/
-[Oo]bj/
-[Tt]emp/
-[Uu]ser[Ss]ettings/
-*.csproj
-*.sln
-*.pidb
-*.booproj
-*.suo
-*.unitypackage
-
-# Auto-imported Unity packages
-**/Assets/TextMesh Pro/
-**/Assets/TextMesh Pro.meta
-
-# Large binary assets 
-*.fbx
-
-# ── OS ────────────────────────────────────────────────────────────────────────
-.DS_Store
-Thumbs.db
-desktop.ini
-*.tmp
-*.bak
-*.swp
-*.swo
-
-# ── IDE ───────────────────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.iml
-
-# ── Claude agent files ────────────────────────────────────────────────────────
-.claude/
-claude.md
-CLAUDE.md
-
-# ── Outputs / large data files ────────────────────────────────────────────────
 outputs/
-*.csv
+docs/paper
+
+# Downloaded at first run by posenet_runner.py (the MediaPipe .task model is tracked)
+python/src/pose/models/posenet_mobilenet_v1_100_257x257.tflite
+# Downloaded on first use when model_complexity selects them (lite is tracked)
+python/src/pose/models/pose_landmarker_full.task
+python/src/pose/models/pose_landmarker_heavy.task
+
+# Unity
+unity/UnityMedia/Library/
+unity/UnityMedia/Temp/
+unity/UnityMedia/Obj/
+unity/UnityMedia/Build/
+unity/UnityMedia/Builds/
+unity/UnityMedia/Logs/
+unity/UnityMedia/UserSettings/
+unity/UnityMedia/Assets/TextMesh Pro/
+unity/UnityMedia/Assets/TextMesh Pro.meta
+
+# Local/per-machine tool settings
+.claude/settings.local.json
