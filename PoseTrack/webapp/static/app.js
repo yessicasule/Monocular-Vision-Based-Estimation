@@ -567,12 +567,14 @@ function renderTrace(fr) {
   const cal = fr.calibrated ? fr.calibrated[side] : null;
   const filt = fr.filtered ? fr.filtered[side] : null;
   const idx = tr.landmark_indices;
+  const unit = fr.trace.coordinate_space ? fr.trace.coordinate_space.unit : "";
 
   host.innerHTML = `
     <div class="trace-step">
       <h4>1 · Keypoints read from this frame</h4>
-      <p>Normalised image coordinates from the pose network, with its own
-         confidence for each point.</p>
+      <p>Keypoints from the pose network with its own confidence for each
+         point. Angles are computed in ${fr.trace.coordinate_space
+           ? fr.trace.coordinate_space.label : "pixel space"}.</p>
       <table>
         <thead><tr><th>joint</th><th>index</th><th>visibility</th></tr></thead>
         <tbody>
@@ -596,9 +598,9 @@ function renderTrace(fr) {
       <h4>3 · Segment vectors in that frame</h4>
       <p>Two-link model: upper arm (shoulder→elbow) and forearm (elbow→wrist).</p>
       <div class="kv">upper arm <b>${vecStr(tr.upper_arm_torso)}</b>
-        &nbsp;·&nbsp;length ${tr.segment_lengths_norm.upper_arm.toFixed(3)}</div>
+        &nbsp;·&nbsp;length ${tr.segment_lengths.upper_arm.toFixed(3)} ${unit}</div>
       <div class="kv">forearm &nbsp;&nbsp;<b>${vecStr(tr.forearm_torso)}</b>
-        &nbsp;·&nbsp;length ${tr.segment_lengths_norm.forearm.toFixed(3)}</div>
+        &nbsp;·&nbsp;length ${tr.segment_lengths.forearm.toFixed(3)} ${unit}</div>
     </div>
 
     <div class="trace-step">

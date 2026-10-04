@@ -264,6 +264,7 @@ def live_predictions(
     """
     import cv2
     from src.pose import load_estimator
+    from src.pose import angle_landmarks
     from src.processing.angle_solver import compute_bilateral_angles
 
     n_gt  = len(next(iter(gt_arrays.values())))
@@ -310,7 +311,8 @@ def live_predictions(
                 _append_nan()
                 continue
 
-            bl = compute_bilateral_angles(lms)
+            bl = compute_bilateral_angles(
+                angle_landmarks(runner, lms, rgb.shape[1], rgb.shape[0]))
             if bl is None:
                 _append_nan()
                 continue

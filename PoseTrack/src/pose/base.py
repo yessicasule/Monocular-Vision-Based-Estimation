@@ -27,6 +27,16 @@ Landmark Coordinate System
              For frameworks without depth output, z should be set to 0.
     visibility : detection confidence in [0, 1].
                  Values < 0.5 indicate the joint is likely occluded.
+
+Angle-Space Landmarks
+---------------------
+Normalised image coordinates are NOT isotropic: x is divided by the image
+width, y by the height, so on a 16:9 frame one unit of y is 1.78× shorter
+than one unit of x. Angles computed directly from them are distorted.
+:func:`angle_landmarks` returns the coordinates joint-angle geometry must use:
+the estimator's metric world landmarks when it provides them (MediaPipe),
+otherwise the image landmarks rescaled to pixels (x·W, y·H, z·W — MediaPipe's
+z shares x's scale).
 """
 
 from __future__ import annotations
@@ -53,6 +63,35 @@ def _default_landmarks() -> list[Landmark]:
     return [Landmark(0.0, 0.0, 0.0, 0.0) for _ in range(N_LANDMARKS)]
 
 
+def to_pixel_space(landmarks: list[Landmark], width: int, height: int) -> list[Landmark]:
+    """Rescale normalised landmarks so x, y and z share one unit (pixels)."""
+    return [
+        Landmark(x=lm.x * width, y=lm.y * height, z=lm.z * width,
+                 visibility=lm.visibility)
+        for lm in landmarks
+    ]
+
+
+def angle_landmarks(
+    estimator: "PoseEstimator",
+    landmarks: list[Landmark] | None,
+    width: int,
+    height: int,
+) -> list[Landmark] | None:
+    """
+    Landmarks in an isotropic space, ready for joint-angle geometry.
+
+    Prefers the estimator's metric world landmarks for the frame just
+    processed; falls back to the image landmarks rescaled to pixels.
+    """
+    if landmarks is None:
+        return None
+    world = getattr(estimator, "world_landmarks", None)
+    if world is not None and len(world) == len(landmarks):
+        return world
+    return to_pixel_space(landmarks, width, height)
+
+
 class PoseEstimator(ABC):
     """
     Abstract base class for all pose estimation backends.
@@ -66,7 +105,12 @@ class PoseEstimator(ABC):
     uses a different keypoint schema, the subclass is responsible for remapping.
 
     If no person is detected, process() returns None.
+
+    Estimators that also produce metric 3D landmarks set ``world_landmarks``
+    for the frame just processed (None otherwise); see :func:`angle_landmarks`.
     """
+
+    world_landmarks: list[Landmark] | None = None
 
     @property
     def name(self) -> str:

@@ -256,10 +256,17 @@ B,<r_flex>,<r_abd>,<r_rot>,<r_elbow>,<l_flex>,<l_abd>,<l_rot>,<l_elbow>\n
 ```
 
 Degrees, two decimal places, UTF-8, newline terminated, sent from a fixed-rate
-thread at 30 Hz by default. An arm that is not tracked in a frame keeps its
-previous values in the packet, so the avatar holds its last known pose instead
-of snapping to zero; the dashboard marks the limb as untracked while that is
-happening.
+thread at 30 Hz by default. Nothing is transmitted until the first tracked
+frame, so the avatar is never driven by a pose that was not measured. After
+that, an arm that is not tracked in a frame keeps its previous values in the
+packet, so the avatar holds its last known pose instead of snapping to zero;
+the dashboard marks the limb as untracked while that is happening. A failed
+send (network down, host unreachable) is counted and reported in the Unity
+panel, and streaming continues.
+
+Joint angles are computed from MediaPipe's metric 3D world landmarks (or, for
+2D-only networks, keypoints scaled to pixels) — never from raw normalised
+image coordinates, whose x and y units differ by the image aspect ratio.
 
 ---
 

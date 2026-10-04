@@ -29,7 +29,7 @@ ANGLE_DOCS = [
         "sign": "+ forward (flexion), − backward (extension)",
         "neutral": "0° with the arm hanging at the side",
         "typical_range": [-60, 180],
-        "formula": "θ = atan2(−v_z, −v_y)",
+        "formula": "θ = atan2(v_z, −v_y)",
         "description": (
             "Rotation of the upper arm in the sagittal plane. v is the unit "
             "shoulder→elbow vector expressed in the torso frame, so the value "
@@ -43,7 +43,7 @@ ANGLE_DOCS = [
         "unit": "deg",
         "sign": "+ away from the midline (abduction), − across the body (adduction)",
         "neutral": "0° with the arm hanging at the side",
-        "typical_range": [-45, 180],
+        "typical_range": [-45, 90],
         "formula": "θ = arcsin(∓v_x)   (sign mirrored per side)",
         "description": (
             "Elevation of the upper arm away from the trunk in the frontal "
@@ -114,7 +114,10 @@ PIPELINE_STAGES = [
         "description": (
             "Torso reference frame construction (Gram–Schmidt orthonormalised "
             "from the shoulder and hip keypoints) followed by the two-link "
-            "joint-angle solution for both arms."
+            "joint-angle solution for both arms. Geometry uses the network's "
+            "metric 3D world landmarks when available (MediaPipe), otherwise "
+            "keypoints scaled to pixels — never raw normalised coordinates, "
+            "whose x and y units differ by the image aspect ratio."
         ),
     },
     {
@@ -202,9 +205,11 @@ PROTOCOL_DOC = {
         },
     ],
     "hold_behaviour": (
-        "An arm that is not tracked in a frame keeps its previous values in the "
-        "packet, so the avatar holds its last known pose instead of snapping to "
-        "zero. The dashboard marks the limb as untracked while this is happening."
+        "Nothing is transmitted until the first tracked frame, so the avatar is "
+        "never driven by a pose that was not measured. After that, an arm that "
+        "is not tracked in a frame keeps its previous values in the packet, so "
+        "the avatar holds its last known pose instead of snapping to zero. The "
+        "dashboard marks the limb as untracked while this is happening."
     ),
     "unity_receiver": "Unity/UnityMedia/Assets/Scripts/UdpAngleReceiver.cs",
 }
@@ -213,6 +218,7 @@ PROTOCOL_DOC = {
 DATA_FLOW = [
     "Camera frame (browser webcam, server camera, or recorded video)",
     "2D pose network → 33 normalised keypoints + visibility",
+    "Isotropic 3D coordinates: metric world landmarks, or keypoints scaled to pixels",
     "Torso reference frame from shoulder and hip keypoints",
     "Segment vectors expressed in the torso frame",
     "Four joint angles per arm (two-link kinematic model)",

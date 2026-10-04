@@ -33,6 +33,7 @@ import numpy as np
 from config.config import Config
 from src.pose.mediapipe_runner import MediaPipeRunner
 from src.processing.angle_filter import AngleFilterBank
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_arm_angles, ArmAngles
 from src.processing.calibration import CalibrationManager
 from src.streaming.udp_streamer import UdpAngleSender
@@ -314,7 +315,8 @@ def main():
             filt_arm: ArmAngles | None = None
 
             if pose_detected:
-                raw_arm = compute_arm_angles(landmarks)
+                raw_arm = compute_arm_angles(angle_landmarks(
+                    pose_runner, landmarks, image_rgb.shape[1], image_rgb.shape[0]))
                 if raw_arm is not None:
                     cal_arm = calib_mgr.apply(raw_arm)
                     filt_arm = filter_sys.update(cal_arm)

@@ -136,6 +136,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: b86e52530c134ec4f919aa979864d1cf, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MonoArm.AvatarMuscleController
+  side: 0
   smoothTime: 0.08
   flexionMax: 150
   flexionMin: -30
@@ -160,7 +161,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 281f34a6e8d78fe4e802547d637538d6, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::MonoArm.PoseDebugUI
-  receiver: {fileID: 491857952}
+  receiver: {fileID: 1153409195}
   refreshHz: 10
 --- !u!1 &189523288
 GameObject:
@@ -317,67 +318,6 @@ PrefabInstance:
       insertIndex: -1
       addedObject: {fileID: 25420040}
   m_SourcePrefab: {fileID: 100100000, guid: 2aabfa09f7d20cc419f9f28841f60fe2, type: 3}
---- !u!1 &491857950
-GameObject:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 491857953}
-  - component: {fileID: 491857952}
-  - component: {fileID: 491857951}
-  m_Layer: 0
-  m_Name: PoseManager
-  m_TagString: Untagged
-  m_Icon: {fileID: 0}
-  m_NavMeshLayer: 0
-  m_StaticEditorFlags: 0
-  m_IsActive: 1
---- !u!114 &491857951
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 491857950}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 178ab98a781f7e6429609ecdb9561bcc, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::MonoArm.MonoArmManager
-  receiver: {fileID: 491857952}
-  avatarController: {fileID: 25420039}
-  logIntervalSeconds: 0
---- !u!114 &491857952
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 491857950}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3233f8c7032ae9f429d663c40833a93e, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: Assembly-CSharp::MonoArm.UdpAngleReceiver
-  listenPort: 9000
---- !u!4 &491857953
-Transform:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 491857950}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_ConstrainProportionsScale: 0
-  m_Children: []
-  m_Father: {fileID: 0}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1 &628605408
 GameObject:
   m_ObjectHideFlags: 0
@@ -449,6 +389,70 @@ Transform:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 628605408}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!1 &1153409193
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1153409196}
+  - component: {fileID: 1153409195}
+  - component: {fileID: 1153409194}
+  m_Layer: 0
+  m_Name: PoseManager
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!114 &1153409194
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1153409193}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 178ab98a781f7e6429609ecdb9561bcc, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MonoArm.MonoArmManager
+  receiver: {fileID: 1153409195}
+  avatarController: {fileID: 25420039}
+  leftArmController: {fileID: 0}
+  boneControllerRight: {fileID: 0}
+  boneControllerLeft: {fileID: 0}
+  logIntervalSeconds: 0
+--- !u!114 &1153409195
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1153409193}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3233f8c7032ae9f429d663c40833a93e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::MonoArm.UdpAngleReceiver
+  listenPort: 9000
+--- !u!4 &1153409196
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1153409193}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 0, z: 0}
@@ -562,4 +566,4 @@ SceneRoots:
   - {fileID: 1702875803}
   - {fileID: 628605411}
   - {fileID: 318858259}
-  - {fileID: 491857953}
+  - {fileID: 1153409196}

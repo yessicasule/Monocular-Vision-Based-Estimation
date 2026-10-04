@@ -3,7 +3,7 @@ src/pose/__init__.py
 Convenience factory for loading pose estimators by name.
 """
 
-from .base import PoseEstimator, Landmark, N_LANDMARKS
+from .base import PoseEstimator, Landmark, N_LANDMARKS, angle_landmarks, to_pixel_space
 from .mediapipe_runner import MediaPipeRunner
 
 

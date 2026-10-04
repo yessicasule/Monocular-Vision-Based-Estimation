@@ -46,28 +46,29 @@ def _make_landmarks(positions: dict[int, tuple[float, float, float]]) -> list[La
 
 def _arm_down_landmarks() -> list[Landmark]:
     """
-    Synthetic T-pose with the right arm hanging straight down.
+    Subject facing the camera with the right arm hanging straight down.
     Expected: all angles ≈ 0° (flexion=0, abduction=0, elbow=0).
 
     MediaPipe image coordinate system:
-        x: right, y: down (image top = 0)
-    We place the body in a frontal view.
+        x: right, y: down (image top = 0), z: away from the camera
+    A subject FACING the camera has their right side on the image's LEFT,
+    so their anterior direction is −z (toward the camera).
 
     Landmark positions (normalised image coords):
-        Left shoulder  (11): (0.4, 0.3, 0)
-        Right shoulder (12): (0.6, 0.3, 0)
-        Left hip       (23): (0.4, 0.6, 0)
-        Right hip      (24): (0.6, 0.6, 0)
-        Right elbow    (14): (0.6, 0.5, 0)   ← arm pointing down (+y)
-        Right wrist    (16): (0.6, 0.7, 0)
+        Left shoulder  (11): (0.6, 0.3, 0)
+        Right shoulder (12): (0.4, 0.3, 0)
+        Left hip       (23): (0.6, 0.6, 0)
+        Right hip      (24): (0.4, 0.6, 0)
+        Right elbow    (14): (0.4, 0.5, 0)   ← arm pointing down (+y)
+        Right wrist    (16): (0.4, 0.7, 0)
     """
     return _make_landmarks({
-        11: (0.4, 0.3, 0.0),   # left shoulder
-        12: (0.6, 0.3, 0.0),   # right shoulder
-        23: (0.4, 0.6, 0.0),   # left hip
-        24: (0.6, 0.6, 0.0),   # right hip
-        14: (0.6, 0.5, 0.0),   # right elbow (arm down)
-        16: (0.6, 0.7, 0.0),   # right wrist
+        11: (0.6, 0.3, 0.0),   # left shoulder
+        12: (0.4, 0.3, 0.0),   # right shoulder
+        23: (0.6, 0.6, 0.0),   # left hip
+        24: (0.4, 0.6, 0.0),   # right hip
+        14: (0.4, 0.5, 0.0),   # right elbow (arm down)
+        16: (0.4, 0.7, 0.0),   # right wrist
     })
 
 
@@ -80,43 +81,55 @@ def _arm_forward_landmarks() -> list[Landmark]:
     y at shoulder height.
     """
     return _make_landmarks({
-        11: (0.4, 0.3,  0.0),
-        12: (0.6, 0.3,  0.0),
-        23: (0.4, 0.6,  0.0),
-        24: (0.6, 0.6,  0.0),
-        14: (0.6, 0.3, -0.15),   # elbow forward (−z = toward camera)
-        16: (0.6, 0.3, -0.30),   # wrist further forward
+        11: (0.6, 0.3,  0.0),
+        12: (0.4, 0.3,  0.0),
+        23: (0.6, 0.6,  0.0),
+        24: (0.4, 0.6,  0.0),
+        14: (0.4, 0.3, -0.15),   # elbow forward (−z = toward camera)
+        16: (0.4, 0.3, -0.30),   # wrist further forward
+    })
+
+
+def _arm_backward_landmarks() -> list[Landmark]:
+    """Right arm swung 45° behind the body (+z = away from camera)."""
+    return _make_landmarks({
+        11: (0.6, 0.3, 0.0),
+        12: (0.4, 0.3, 0.0),
+        23: (0.6, 0.6, 0.0),
+        24: (0.4, 0.6, 0.0),
+        14: (0.4, 0.4, 0.10),    # down and behind
+        16: (0.4, 0.5, 0.20),
     })
 
 
 def _arm_side_landmarks() -> list[Landmark]:
     """
     Right arm raised to the side (abduction ~90°).
-    In image space, "to the right" = increasing x.
+    The subject faces the camera, so their right is the image's −x.
     """
     return _make_landmarks({
-        11: (0.4, 0.3, 0.0),
-        12: (0.6, 0.3, 0.0),
-        23: (0.4, 0.6, 0.0),
-        24: (0.6, 0.6, 0.0),
-        14: (0.75, 0.3, 0.0),    # elbow out to the right
-        16: (0.90, 0.3, 0.0),    # wrist further right
+        11: (0.6, 0.3, 0.0),
+        12: (0.4, 0.3, 0.0),
+        23: (0.6, 0.6, 0.0),
+        24: (0.4, 0.6, 0.0),
+        14: (0.25, 0.3, 0.0),    # elbow out to the subject's right
+        16: (0.10, 0.3, 0.0),    # wrist further out
     })
 
 
 def _elbow_bent_landmarks() -> list[Landmark]:
     """
     Right arm hanging down, elbow bent ~90° (forearm points forward).
-    Upper arm: shoulder(0.6,0.3)→elbow(0.6,0.5) [down]
-    Forearm:   elbow(0.6,0.5)→wrist(0.6,0.5,-0.15) [forward]
+    Upper arm: shoulder(0.4,0.3)→elbow(0.4,0.5) [down]
+    Forearm:   elbow(0.4,0.5)→wrist(0.4,0.5,-0.15) [forward]
     """
     return _make_landmarks({
-        11: (0.4, 0.3,  0.0),
-        12: (0.6, 0.3,  0.0),
-        23: (0.4, 0.6,  0.0),
-        24: (0.6, 0.6,  0.0),
-        14: (0.6, 0.5,  0.0),    # elbow down from shoulder
-        16: (0.6, 0.5, -0.15),   # wrist forward → 90° elbow
+        11: (0.6, 0.3,  0.0),
+        12: (0.4, 0.3,  0.0),
+        23: (0.6, 0.6,  0.0),
+        24: (0.4, 0.6,  0.0),
+        14: (0.4, 0.5,  0.0),    # elbow down from shoulder
+        16: (0.4, 0.5, -0.15),   # wrist forward → 90° elbow
     })
 
 
@@ -211,8 +224,30 @@ class TestAngleSolverReference(unittest.TestCase):
     def test_arm_forward_positive_flexion(self):
         a = self._angles(_arm_forward_landmarks())
         self.assertIsNotNone(a)
-        self.assertGreater(a.shoulder_flexion, 30.0,
-                           msg=f"Expected flexion>30° for arm_forward, got {a.shoulder_flexion:.1f}°")
+        self.assertAlmostEqual(a.shoulder_flexion, 90.0, delta=1.0,
+                               msg=f"Expected flexion≈+90° for arm_forward, got {a.shoulder_flexion:.1f}°")
+
+    def test_arm_backward_negative_flexion(self):
+        a = self._angles(_arm_backward_landmarks())
+        self.assertIsNotNone(a)
+        self.assertAlmostEqual(a.shoulder_flexion, -45.0, delta=1.0,
+                               msg=f"Expected flexion≈-45° for arm_backward, got {a.shoulder_flexion:.1f}°")
+
+    def test_anterior_axis_points_at_the_camera(self):
+        """A subject facing the camera has its anterior axis along −z."""
+        frame = build_torso_frame(_arm_down_landmarks())
+        np.testing.assert_allclose(frame.z_axis, [0.0, 0.0, -1.0], atol=1e-9)
+
+    def test_left_arm_mirrors_right_arm(self):
+        """Mirror-image poses give identical angles on both sides."""
+        from src.processing.angle_solver import compute_bilateral_angles
+        lms = _arm_side_landmarks()
+        # Mirror the right arm onto the left about the body midline x = 0.5
+        lms[13] = Landmark(x=1.0 - lms[14].x, y=lms[14].y, z=lms[14].z)
+        lms[15] = Landmark(x=1.0 - lms[16].x, y=lms[16].y, z=lms[16].z)
+        b = compute_bilateral_angles(lms)
+        self.assertAlmostEqual(b.left.shoulder_abduction, b.right.shoulder_abduction, places=6)
+        self.assertAlmostEqual(b.left.shoulder_flexion, b.right.shoulder_flexion, places=6)
 
     def test_elbow_never_negative(self):
         """Elbow flexion should always be ≥ 0 by physical constraint."""
@@ -232,6 +267,44 @@ class TestAngleSolverReference(unittest.TestCase):
         if a is not None and a.elbow_flexion < 25.0:
             self.assertFalse(a.rotation_reliable,
                              msg="Rotation marked reliable with nearly-straight elbow")
+
+
+class TestAngleSpace(unittest.TestCase):
+    """Angles must be computed in an isotropic space, not normalised coords."""
+
+    def test_pixel_space_restores_true_angle_on_wide_frames(self):
+        from src.pose.base import to_pixel_space
+        # 1280×720 frame; in PIXELS the right arm is abducted 60° from
+        # hanging: 100 px out and 57.7 px down from the shoulder (512, 216).
+        W, H = 1280, 720
+        down = 100.0 / math.tan(math.radians(60.0))
+        lms = _make_landmarks({
+            11: (768 / W, 216 / H, 0.0), 12: (512 / W, 216 / H, 0.0),
+            23: (768 / W, 432 / H, 0.0), 24: (512 / W, 432 / H, 0.0),
+            14: ((512 - 100) / W, (216 + down) / H, 0.0),
+            16: ((512 - 200) / W, (216 + 2 * down) / H, 0.0),
+        })
+        a_px = compute_arm_angles(to_pixel_space(lms, W, H))
+        self.assertAlmostEqual(a_px.shoulder_abduction, 60.0, delta=0.01)
+        # The same pose read from raw normalised coordinates is distorted
+        a_norm = compute_arm_angles(lms)
+        self.assertGreater(abs(a_norm.shoulder_abduction - a_px.shoulder_abduction), 5.0)
+
+    def test_angle_landmarks_prefers_world_landmarks(self):
+        from src.pose.base import angle_landmarks
+        image = _arm_down_landmarks()
+        world = _arm_side_landmarks()
+
+        class _Est:
+            world_landmarks = world
+        self.assertIs(angle_landmarks(_Est(), image, 640, 480), world)
+
+        class _NoWorld:
+            world_landmarks = None
+        px = angle_landmarks(_NoWorld(), image, 640, 480)
+        self.assertAlmostEqual(px[12].x, image[12].x * 640)
+        self.assertAlmostEqual(px[12].y, image[12].y * 480)
+        self.assertIsNone(angle_landmarks(_Est(), None, 640, 480))
 
 
 class TestMovenetRemapping(unittest.TestCase):

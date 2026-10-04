@@ -128,6 +128,11 @@ class MoveNetRunner(PoseEstimator):
         self._variant = variant
         self._input_size = self._INPUT_SIZES[variant]
 
+        from .tf_guard import hide_unloadable_tensorflow
+        tf_error = hide_unloadable_tensorflow()
+        if tf_error:
+            raise RuntimeError(f"MoveNet needs TensorFlow, which is installed but cannot load: {tf_error}")
+
         print(f"[MoveNet] Loading {variant} from TensorFlow Hub...")
         import tensorflow_hub as hub
         module = hub.load(self._HUB_URLS[variant])

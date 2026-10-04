@@ -200,6 +200,7 @@ your own hardware rather than quoting these.
 ## Tests
 
 ```bash
+pip install -r requirements-dev.txt
 python -m pytest tests/ -q
 ```
 

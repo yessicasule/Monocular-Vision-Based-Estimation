@@ -46,6 +46,7 @@ import cv2
 import numpy as np
 
 from src.pose import load_estimator, PoseEstimator
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_arm_angles, compute_bilateral_angles, ArmAngles, BilateralArmAngles
 from src.processing.angle_filter import BilateralFilterBank
 from src.processing.calibration import CalibrationManager, REQUIRED_POSES
@@ -263,7 +264,8 @@ def run_calibration_session(
                           (100, 220, 100), -1)
 
             if lms is not None:
-                angles = compute_arm_angles(lms)
+                angles = compute_arm_angles(
+                    angle_landmarks(runner, lms, frame.shape[1], frame.shape[0]))
                 if angles is not None:
                     sample_counts[current_pose].append(angles)
 
@@ -338,7 +340,8 @@ class FrameworkState:
         self.total_inference_ms += self.inference_ms
 
         if self.landmarks is not None:
-            self.raw_angles = compute_bilateral_angles(self.landmarks)
+            self.raw_angles = compute_bilateral_angles(
+                angle_landmarks(self.runner, self.landmarks, rgb.shape[1], rgb.shape[0]))
             if self.raw_angles is not None and (self.raw_angles.right or self.raw_angles.left):
                 self.detection_count += 1
                 self.filt_angles = self.filt.update(self.raw_angles)

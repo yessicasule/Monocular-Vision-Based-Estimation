@@ -419,3 +419,118 @@ class TestWebSocketDataPlane:
             ws.send_json({"type": "ping"})
             ws.receive_json()
         assert server_module.state.rtt_summary()["n"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# regressions
+# ---------------------------------------------------------------------------
+
+class TestAngleSpaceInPipeline:
+    def test_angles_are_computed_in_metric_world_space(self, pipeline):
+        trace = pipeline.process_frame(_load_sample_frame()).trace
+        assert trace["coordinate_space"]["id"] == "world"
+        assert trace["coordinate_space"]["unit"] == "m"
+        # An adult upper arm is roughly 0.25-0.35 m; normalised image
+        # coordinates would give a frame-size-dependent fraction instead.
+        assert 0.15 < trace["sides"]["right"]["segment_lengths"]["upper_arm"] < 0.45
+
+
+class TestUdpSender:
+    @staticmethod
+    def _receiver():
+        import socket
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind(("127.0.0.1", 0))
+        sock.settimeout(1.0)
+        return sock
+
+    def test_nothing_is_sent_before_the_first_measurement(self):
+        import time
+        from src.processing.angle_solver import BilateralArmAngles
+        from src.streaming.udp_streamer import UdpAngleSender
+
+        rx = self._receiver()
+        tx = UdpAngleSender(port=rx.getsockname()[1], hz=100, bilateral=True, verbose=False)
+        tx.start()
+        try:
+            time.sleep(0.15)
+            assert tx.packets_sent == 0
+            assert tx.wire_state()["awaiting_data"] is True
+            tx.update_bilateral(BilateralArmAngles(right=_angles(flex=12.5), left=None))
+            data, _ = rx.recvfrom(256)
+            assert data.decode().startswith("B,12.50,")
+        finally:
+            tx.stop()
+            rx.close()
+
+    def test_a_send_error_does_not_stop_the_stream(self):
+        import time
+        from src.streaming.udp_streamer import UdpAngleSender
+
+        class FlakySocket:
+            calls = 0
+
+            def sendto(self, msg, addr):
+                FlakySocket.calls += 1
+                if FlakySocket.calls == 1:
+                    raise OSError("network is unreachable")
+                return len(msg)
+
+            def close(self):
+                pass
+
+        tx = UdpAngleSender(hz=200, verbose=False)
+        tx._sock.close()
+        tx._sock = FlakySocket()
+        tx.update(_angles(flex=5.0))
+        tx.start()
+        try:
+            time.sleep(0.2)
+            assert tx.running
+            assert tx.send_errors == 1
+            assert tx.packets_sent > 1
+            assert "unreachable" in tx.wire_state()["last_error"]
+        finally:
+            tx.stop()
+
+
+class TestCalibrationPersistence:
+    def test_saved_calibration_is_reloaded_on_restart(self, tmp_path):
+        mgr = TestCalibrationGuards()._run(forward_flexion=80.0)
+        mgr.save(tmp_path / "calibration_right.json")
+
+        pipe = LivePipeline(PipelineConfig(udp_enabled=False), tmp_path)
+        try:
+            assert pipe.calibration_state()["calibrated"]["right"] is True
+            assert pipe._calib["right"].data.flexion.scale == pytest.approx(90.0 / 80.0)
+        finally:
+            pipe.close()
+
+
+class TestTensorflowGuard:
+    def test_unloadable_tensorflow_is_hidden_not_fatal(self, monkeypatch):
+        import builtins
+        from src.pose import tf_guard
+
+        monkeypatch.setattr(tf_guard, "_probed", False)
+        monkeypatch.setattr(tf_guard, "_load_error", None)
+        saved = {m: sys.modules.pop(m) for m in list(sys.modules)
+                 if m == "tensorflow" or m.startswith("tensorflow.")}
+        real_import = builtins.__import__
+
+        def blocked(name, *args, **kwargs):
+            if name == "tensorflow" or name.startswith("tensorflow."):
+                raise ImportError("DLL load failed: blocked by Application Control policy")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", blocked)
+        try:
+            with pytest.warns(RuntimeWarning, match="failed to load"):
+                err = tf_guard.hide_unloadable_tensorflow()
+            assert "Application Control" in err
+            monkeypatch.setattr(builtins, "__import__", real_import)
+            with pytest.raises(ModuleNotFoundError):
+                import tensorflow  # noqa: F401
+        finally:
+            sys.modules.pop("tensorflow", None)
+            sys.modules.update(saved)

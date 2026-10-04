@@ -8,16 +8,20 @@ using the SAME anatomical angle convention as the MonoArm vision pipeline
 
 Human3.6M Dataset Format
 --------------------------
-The public skeleton release stores each action as a plain-text file where
-each row contains 99 comma-separated floating-point values:
+The release used here (``h3.6m/dataset/S*/<action>_<n>.txt``, the
+motion-prediction distribution of Fragkiadaki et al. 2015 / Martinez et al.
+2017) stores one frame per row as 99 comma-separated values:
 
-    33 joints × 3 values per joint = 99 values
+    3 root position  +  32 joints × 3 exponential-map rotation values
 
-The 3 values per joint are 3D Cartesian coordinates (millimetres) in the
-H3.6M global reference frame, NOT Euler angles. 
+These are joint ROTATIONS in radians, NOT 3D positions. Reading them as
+xyz coordinates yields a "skeleton" whose bone lengths change every frame
+(the upper arm of S1/directions_1 varies 2.0–5.9 units), so joint positions
+are reconstructed with forward kinematics over the H3.6M bone hierarchy
+(:func:`h36m_expmap_to_xyz`) before any angle is computed.
 
-H3.6M Right-Arm Joint Indices (0-indexed)
--------------------------------------------
+H3.6M Right-Arm Joint Indices (0-indexed, 32-joint FK skeleton)
+----------------------------------------------------------------
 H3.6M uses a different skeleton topology from MediaPipe. The mapping
 to right-arm joints used for angle computation is:
 
@@ -35,14 +39,12 @@ the standard 32-joint skeleton released at:
 
 Coordinate Convention
 ---------------------
-H3.6M coordinates are in millimetres with:
-    X → lateral (right)
-    Y → vertical (up)
-    Z → anterior (toward camera)
-
-This is a right-hand system with Y-up, analogous to the torso frame we
-construct in coordinate_frame.py. We build the same ISB-aligned torso
-frame from H3.6M joint positions so the angle decomposition is identical.
+Forward kinematics yields millimetres in the skeleton's own right-handed
+frame (rest pose: X → subject's left, Y → up, Z → anterior). The common
+``xyz[:, [0, 2, 1]]`` axis swap used for plotting is deliberately NOT
+applied: swapping two axes is a reflection, which would mirror the subject
+and flip the sign of flexion. The torso frame is rebuilt from the joints
+exactly as coordinate_frame.py does, so the global orientation is irrelevant.
 
 Anatomical Angle Computation
 ------------------------------
@@ -52,7 +54,7 @@ unsigned angles), we compute angles using the same ZXY Euler decomposition
 as angle_solver.py but operating directly on H3.6M 3D coordinates.
 
 For the right arm:
-    shoulder_flexion   = atan2(-vz_torso, -vy_torso)        [degrees]
+    shoulder_flexion   = atan2(vz_torso, -vy_torso)         [degrees, + = forward]
     shoulder_abduction = arcsin(-vx_torso)                   [degrees, right arm]
     shoulder_rotation  = forearm proxy (when elbow bent)     [degrees]
     elbow_flexion      = arccos(û_arm · û_forearm)           [degrees]
@@ -91,6 +93,80 @@ H36M_CHEST     = 14   # spine1 / chest — superior torso reference
 # Minimum elbow flexion (degrees) for shoulder rotation to be reliable
 # --------------------------------------------------------------------------
 ROT_RELIABLE_THRESHOLD = 25.0
+
+# --------------------------------------------------------------------------
+# H3.6M bone hierarchy for forward kinematics (32 joints)
+# Parent indices and rest-pose bone offsets (mm, in the parent's frame) as
+# published with the exponential-map release (Martinez et al. 2017,
+# src/forward_kinematics.py).
+# --------------------------------------------------------------------------
+_H36M_PARENT = np.array([
+    0, 1, 2, 3, 4, 5, 1, 7, 8, 9, 10, 1, 12, 13, 14, 15, 13,
+    17, 18, 19, 20, 21, 20, 23, 13, 25, 26, 27, 28, 29, 28, 31,
+]) - 1
+
+_H36M_OFFSET = np.array([
+    0.000000, 0.000000, 0.000000,      -132.948591, 0.000000, 0.000000,
+    0.000000, -442.894612, 0.000000,   0.000000, -454.206447, 0.000000,
+    0.000000, 0.000000, 162.767078,    0.000000, 0.000000, 74.999437,
+    132.948826, 0.000000, 0.000000,    0.000000, -442.894413, 0.000000,
+    0.000000, -454.206590, 0.000000,   0.000000, 0.000000, 162.767426,
+    0.000000, 0.000000, 74.999948,     0.000000, 0.100000, 0.000000,
+    0.000000, 233.383263, 0.000000,    0.000000, 257.077681, 0.000000,
+    0.000000, 121.134938, 0.000000,    0.000000, 115.002227, 0.000000,
+    0.000000, 257.077681, 0.000000,    0.000000, 151.034226, 0.000000,
+    0.000000, 278.882773, 0.000000,    0.000000, 251.733451, 0.000000,
+    0.000000, 0.000000, 0.000000,      0.000000, 0.000000, 99.999627,
+    0.000000, 100.000188, 0.000000,    0.000000, 0.000000, 0.000000,
+    0.000000, 257.077681, 0.000000,    0.000000, 151.031437, 0.000000,
+    0.000000, 278.892924, 0.000000,    0.000000, 251.728680, 0.000000,
+    0.000000, 0.000000, 0.000000,      0.000000, 0.000000, 99.999888,
+    0.000000, 137.499922, 0.000000,    0.000000, 0.000000, 0.000000,
+]).reshape(32, 3)
+
+
+def _expmap_to_rotmat(r: np.ndarray) -> np.ndarray:
+    """Rodrigues' formula: exponential-map vector → 3×3 rotation matrix."""
+    theta = float(np.linalg.norm(r))
+    if theta < 1e-12:
+        return np.eye(3)
+    k = r / theta
+    K = np.array([[0.0, -k[2], k[1]],
+                  [k[2], 0.0, -k[0]],
+                  [-k[1], k[0], 0.0]])
+    return np.eye(3) + math.sin(theta) * K + (1.0 - math.cos(theta)) * (K @ K)
+
+
+def h36m_expmap_to_xyz(row: np.ndarray) -> np.ndarray:
+    """
+    Forward kinematics for one 99-value exponential-map frame.
+
+    Parameters
+    ----------
+    row : np.ndarray, shape (99,)
+        Root position (3) followed by 32 joints × 3 exp-map rotation values.
+
+    Returns
+    -------
+    np.ndarray, shape (32, 3)
+        Joint positions in millimetres (row-vector convention, matching the
+        reference implementation: x_child = offset @ R_parent + x_parent).
+    """
+    row = np.asarray(row, dtype=np.float64)
+    if row.shape[0] < 99:
+        raise ValueError(f"expected 99 values per frame, got {row.shape[0]}")
+    xyz = np.zeros((32, 3))
+    rot = [None] * 32
+    for i in range(32):
+        R_local = _expmap_to_rotmat(row[3 + 3 * i: 6 + 3 * i])
+        p = _H36M_PARENT[i]
+        if p < 0:
+            xyz[i] = _H36M_OFFSET[i] + row[0:3]
+            rot[i] = R_local
+        else:
+            xyz[i] = _H36M_OFFSET[i] @ rot[p] + xyz[p]
+            rot[i] = R_local @ rot[p]
+    return xyz
 
 
 @dataclass
@@ -153,8 +229,8 @@ def _compute_side_gt(
     u_ua = _normalize(v_ua_torso)
     vx, vy, vz = u_ua[0], u_ua[1], u_ua[2]
 
-    # Shoulder flexion-extension: atan2(-vz, -vy)
-    flexion_deg = math.degrees(math.atan2(-vz, -vy))
+    # Shoulder flexion-extension: atan2(vz, -vy)  (+ = forward)
+    flexion_deg = math.degrees(math.atan2(vz, -vy))
 
     # Shoulder abduction-adduction (right-arm convention → negate vx)
     vx_clamped    = float(np.clip(-vx, -1.0, 1.0))
@@ -267,8 +343,9 @@ def parse_h36m_file(txt_path: Path) -> list[GTAngles]:
     """
     Parse one H3.6M skeleton .txt file and extract right-arm GT angles.
 
-    H3.6M .txt format: one row per frame, 99 comma-separated values
-    representing 33 joints × 3 Cartesian coordinates.
+    H3.6M .txt format: one row per frame, 99 comma-separated values — root
+    position plus 32 exponential-map joint rotations. Joint positions are
+    reconstructed by forward kinematics before angles are computed.
 
     Parameters
     ----------
@@ -290,8 +367,8 @@ def parse_h36m_file(txt_path: Path) -> list[GTAngles]:
         if len(vals) < 99:
             continue
         try:
-            joints_flat = np.array([float(v) for v in vals[:99]], dtype=np.float64)
-            joints_xyz  = joints_flat.reshape(33, 3)
+            expmap     = np.array([float(v) for v in vals[:99]], dtype=np.float64)
+            joints_xyz = h36m_expmap_to_xyz(expmap)
             gt = _compute_gt_angles(joints_xyz, frame_idx=frame_idx)
             if gt is not None:
                 gt.subject = subject

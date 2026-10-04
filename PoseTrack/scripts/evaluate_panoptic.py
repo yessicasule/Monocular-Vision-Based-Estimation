@@ -53,6 +53,7 @@ from src.evaluation.eval_plots import (
     plot_scatter_gt, plot_error_cdf, plot_timeseries_vs_gt,
 )
 from src.pose import load_estimator
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_bilateral_angles
 from src.processing.angle_filter import BilateralFilterBank
 
@@ -112,7 +113,9 @@ def run_live_predictions(
 
             rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
             lms = runner.process(rgb)
-            bilateral = compute_bilateral_angles(lms) if lms is not None else None
+            bilateral = (compute_bilateral_angles(
+                angle_landmarks(runner, lms, rgb.shape[1], rgb.shape[0]))
+                if lms is not None else None)
             filt_bilateral = filt.update(bilateral) if bilateral is not None else None
 
             right = filt_bilateral.right if filt_bilateral else None
@@ -218,7 +221,7 @@ def main() -> None:
         print(f"  [{fw}]  MPJAE={result.mpjae:.2f} deg  r={result.mean_r:.3f}  "
               f"PCK@5={result.mean_pck_5:.1f}%")
 
-    print_metrics_table(all_results)
+    print_metrics_table(all_results, dataset="CMU PANOPTIC")
 
     json_path = out_dir / "metrics_report.json"
     with open(json_path, "w") as f:

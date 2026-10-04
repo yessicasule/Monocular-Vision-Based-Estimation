@@ -36,10 +36,11 @@ Shoulder Angle Derivation
 Let v = [vx, vy, vz]^T be the unit upper-arm vector in the torso frame.
 
     Flexion-Extension:
-        θ_flex = atan2(−vz, −vy)                 [rad]
+        θ_flex = atan2(vz, −vy)                  [rad]
 
-        When the arm hangs down: vy ≈ −1, vz ≈ 0  →  θ_flex ≈ 0°
-        When the arm points forward: vz ≈ +1        →  θ_flex ≈ +90°
+        When the arm hangs down: vy ≈ −1, vz ≈ 0  →  θ_flex = atan2(0, 1)  = 0°
+        When the arm points forward: vz ≈ +1        →  θ_flex = atan2(1, 0)  = +90°
+        When the arm points backward: vz ≈ −1       →  θ_flex = atan2(−1, 0) = −90°
 
     Abduction-Adduction:
         θ_abd = arcsin(vx / ‖v‖)                 [rad]
@@ -63,11 +64,19 @@ Let v = [vx, vy, vz]^T be the unit upper-arm vector in the torso frame.
 
 Elbow Flexion Derivation
 --------------------------
-    θ_elbow = 180° − arccos(û_arm · û_forearm)
+    θ_elbow = arccos(û_arm · û_forearm)
 
     where û_arm is the unit vector from shoulder to elbow (direction of
     upper arm), and û_forearm is the unit vector from elbow to wrist.
-    Result: 0° = fully extended, ~150° = fully flexed.
+    Both point proximal → distal, so a straight arm gives a dot product of
+    +1. Result: 0° = fully extended, ~150° = fully flexed.
+
+Input Space
+-----------
+The landmarks passed in must be isotropic — one unit along every axis.
+Use src.pose.angle_landmarks() to obtain metric world landmarks (MediaPipe)
+or pixel-scaled image landmarks. Raw normalised image coordinates divide x
+by the width and y by the height, which distorts every angle.
 
 MediaPipe Right Arm Landmarks:
     RIGHT_SHOULDER = 12
@@ -178,12 +187,12 @@ def _compute_shoulder_angles(
     vz = v_upper_arm_torso[2]  # anterior component
 
     # Flexion-Extension
-    # θ_flex = atan2(−vz, −vy)
+    # θ_flex = atan2(vz, −vy)
     # Derivation: in the sagittal plane (Y-Z plane of torso frame),
     # the rest position (arm down) corresponds to vy = −1, vz = 0,
-    # giving θ = atan2(0, +1) = 0°.  Arm forward: vy→0, vz→+1,
-    # giving θ = atan2(−1, 0) = +90°.
-    flexion_rad = math.atan2(-vz, -vy)
+    # giving θ = atan2(0, +1) = 0°.  Arm forward: vy→0, vz→+1 (anterior),
+    # giving θ = atan2(+1, 0) = +90°.
+    flexion_rad = math.atan2(vz, -vy)
     flexion_deg = math.degrees(flexion_rad)
 
     # Abduction-Adduction
@@ -275,18 +284,14 @@ def _compute_elbow_flexion(
     """
     Compute elbow flexion angle from upper-arm and forearm direction vectors.
 
-    θ_elbow = arccos(−û_upper · û_forearm)
+    θ_elbow = arccos(û_upper · û_forearm)
 
     where û_upper = shoulder→elbow  and  û_forearm = elbow→wrist.
 
-    Geometry: when the arm is fully extended, û_upper and û_forearm are
-    parallel and co-directional, so their dot product = +1 and the angle
-    between them = 0°. To obtain the *included* angle at the elbow joint
-    (the supplementary angle), we negate û_upper before taking the dot product:
-
-        θ_elbow = arccos(−û_upper · û_forearm)
-
-    This gives 0° for a straight arm and ~150° for a maximally flexed elbow.
+    Geometry: both vectors point proximal → distal, so a fully extended arm
+    makes them co-directional (dot = +1, θ = 0°), a right-angle bend makes
+    them perpendicular (θ = 90°), and a maximally folded elbow approaches
+    180° (~150° in practice, limited by soft tissue).
 
     Parameters
     ----------
@@ -302,23 +307,6 @@ def _compute_elbow_flexion(
     """
     u_arm    = _normalize(v_upper_arm_world)
     u_fore   = _normalize(v_forearm_world)
-    # The included angle at the elbow = 180° − the angle between the two
-    # bone direction vectors (both measured from proximal to distal end).
-    # When the arm is fully extended, u_arm and u_fore are co-directional
-    # (dot = +1, angle = 0°) so elbow flexion = 180° − 0° ... wait, that is wrong.
-    #
-    # Correct geometry:
-    #   - u_arm  = shoulder → elbow   (upper arm direction, proximal to distal)
-    #   - u_fore = elbow   → wrist    (forearm direction, proximal to distal)
-    # Fully extended: u_arm and u_fore are PARALLEL (+same direction).
-    #   dot(u_arm, u_fore) = +1   →   angle_between = 0°
-    #   elbow_flexion = 0°  ← CORRECT: arm straight = 0° flexion.
-    # At 90° bend: u_arm and u_fore are perpendicular.
-    #   dot(u_arm, u_fore) = 0   →   angle_between = 90°  ← CORRECT.
-    # Fully flexed (arm folded back): u_arm and u_fore are anti-parallel.
-    #   dot(u_arm, u_fore) = -1  →   angle_between = 180°  ← max flexion.
-    #
-    # Therefore: elbow_flexion = arccos(u_arm · u_fore) directly.
     cos_ang = float(np.clip(np.dot(u_arm, u_fore), -1.0, 1.0))
     return max(0.0, math.degrees(math.acos(cos_ang)))
 

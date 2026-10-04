@@ -37,6 +37,7 @@ import numpy as np
 
 from src.pose import load_estimator, PoseEstimator
 from src.processing.coordinate_frame import build_torso_frame
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_arm_angles
 from src.processing.angle_filter import AngleFilterBank
 from src.processing.calibration import CalibrationManager, REQUIRED_POSES
@@ -171,7 +172,8 @@ def _run_calibration_session(
             cv2.rectangle(frame, (0, frame.shape[0] - 8), (bar_w, frame.shape[0]), _GREEN, -1)
 
             if lms is not None:
-                angles = compute_arm_angles(lms)
+                angles = compute_arm_angles(
+                    angle_landmarks(runner, lms, frame.shape[1], frame.shape[0]))
                 if angles is not None:
                     sample_counts[current_pose].append(angles)
 
@@ -291,7 +293,8 @@ def main() -> None:
 
             # Pose + angles
             lms    = runner.process(rgb)
-            angles = compute_arm_angles(lms) if lms is not None else None
+            angles = (compute_arm_angles(angle_landmarks(runner, lms, rgb.shape[1], rgb.shape[0]))
+                      if lms is not None else None)
 
             raw_angles = angles
             if angles is not None:

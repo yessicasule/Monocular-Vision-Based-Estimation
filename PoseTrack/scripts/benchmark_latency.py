@@ -32,6 +32,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from src.pose.mediapipe_runner import MediaPipeRunner
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_arm_angles
 from src.processing.angle_filter import AngleFilterBank
 from src.streaming.udp_streamer import UdpAngleSender
@@ -111,7 +112,8 @@ def benchmark(
         detected += 1
 
         # 3. Angle solver
-        angles = compute_arm_angles(lms)
+        angles = compute_arm_angles(
+            angle_landmarks(runner, lms, rgb.shape[1], rgb.shape[0]))
         t3     = time.perf_counter()
 
         if angles is None:

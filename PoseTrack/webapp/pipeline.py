@@ -37,7 +37,7 @@ from pathlib import Path
 
 import numpy as np
 
-from src.pose import load_estimator
+from src.pose import angle_landmarks, load_estimator
 from src.processing.angle_filter import BilateralFilterBank
 from src.processing.angle_logger import BilateralCsvAngleLogger
 from src.processing.angle_solver import (
@@ -78,6 +78,16 @@ CALIBRATION_SAMPLE_FRAMES = 15
 # the torso anchors that define the reference frame, and the face points
 # that make the overlay readable.
 OVERLAY_LANDMARKS = (0, 11, 12, 13, 14, 15, 16, 23, 24)
+
+# The coordinates joint angles are computed in (see src.pose.angle_landmarks)
+_COORDINATE_SPACES = {
+    "world":  {"id": "world", "unit": "m",
+               "label": "metric 3D world landmarks from the pose network, "
+                        "hip-centred, metres"},
+    "pixels": {"id": "pixels", "unit": "px",
+               "label": "image keypoints scaled to pixels (x·width, y·height, "
+                        "z·width) so all three axes share one unit"},
+}
 
 # Skeleton segments drawn by the front-end (pairs of landmark indices).
 OVERLAY_EDGES = (
@@ -240,7 +250,6 @@ class LivePipeline:
             "captured": [], "remaining": list(REQUIRED_POSES),
             "samples": 0, "message": "",
         }
-        self._calib_path = self.output_dir / "calibration.json"
         self._load_calibration_if_present()
 
         # UDP transmit to Unity
@@ -424,8 +433,7 @@ class LivePipeline:
     # ------------------------------------------------------------------
 
     def _load_calibration_if_present(self) -> None:
-        if not self._calib_path.exists():
-            return
+        # Calibrations are saved per side as calibration_<side>.json
         for side in ("right", "left"):
             path = self.output_dir / f"calibration_{side}.json"
             if path.exists():
@@ -574,9 +582,13 @@ class LivePipeline:
         t.pose_ms = (time.perf_counter() - t0) * 1000.0
 
         # --- joint angles ----------------------------------------------------
+        # Geometry runs on isotropic coordinates: metric world landmarks when
+        # the network provides them, else image landmarks scaled to pixels.
         t0 = time.perf_counter()
-        raw = compute_bilateral_angles(landmarks) if landmarks is not None else None
-        frame_obj = build_torso_frame(landmarks) if landmarks is not None else None
+        geo = angle_landmarks(estimator, landmarks, w, h)
+        space = "world" if geo is not None and geo is getattr(estimator, "world_landmarks", None) else "pixels"
+        raw = compute_bilateral_angles(geo) if geo is not None else None
+        frame_obj = build_torso_frame(geo) if geo is not None else None
         t.angles_ms = (time.perf_counter() - t0) * 1000.0
 
         # --- temporal filtering (all families) -------------------------------
@@ -661,7 +673,7 @@ class LivePipeline:
             filtered=bilateral_to_dict(active),
             calibrated=bilateral_to_dict(calibrated),
             filter_bank={ft: bilateral_to_dict(out) for ft, out in bank_out.items()},
-            trace=self._build_trace(landmarks, frame_obj, raw),
+            trace=self._build_trace(landmarks, geo, space, frame_obj, raw),
             timings=t.as_dict(),
             gesture={"name": gesture_name, "confidence": round(float(gesture_conf), 3)},
             status={
@@ -698,16 +710,19 @@ class LivePipeline:
             })
         return out
 
-    def _build_trace(self, landmarks, frame, raw) -> dict:
+    def _build_trace(self, landmarks, geo, space, frame, raw) -> dict:
         """
         Expose the intermediate quantities the angles were derived from.
 
         The dashboard renders this as a step-by-step derivation so a reader
-        can follow a single frame from pixel coordinates, through the torso
+        can follow a single frame from the keypoints, through the torso
         reference frame and the segment vectors expressed in it, to the four
         reported joint angles — no step is a black box.
+
+        ``landmarks`` are the image keypoints (for visibility); ``geo`` are
+        the isotropic coordinates the angles were actually computed from.
         """
-        if landmarks is None or frame is None:
+        if landmarks is None or geo is None or frame is None:
             return {}
 
         def _vec(v) -> list:
@@ -720,15 +735,16 @@ class LivePipeline:
                 "y_axis_superior": _vec(frame.y_axis),
                 "z_axis_anterior": _vec(frame.z_axis),
             },
+            "coordinate_space": _COORDINATE_SPACES[space],
             "sides": {},
         }
 
         for side in ("right", "left"):
             i_sh, i_el, i_wr = _SIDE_LANDMARKS[side]
             try:
-                p_sh = _to_array(landmarks[i_sh])
-                p_el = _to_array(landmarks[i_el])
-                p_wr = _to_array(landmarks[i_wr])
+                p_sh = _to_array(geo[i_sh])
+                p_el = _to_array(geo[i_el])
+                p_wr = _to_array(geo[i_wr])
             except (IndexError, TypeError):
                 continue
 
@@ -757,7 +773,7 @@ class LivePipeline:
                 "upper_arm_torso": _vec(v_upper_torso),
                 "forearm_torso":   _vec(v_fore_torso),
                 "upper_arm_unit_torso": _vec(u),
-                "segment_lengths_norm": {
+                "segment_lengths": {
                     "upper_arm": round(float(np.linalg.norm(v_upper_world)), 5),
                     "forearm":   round(float(np.linalg.norm(v_fore_world)), 5),
                 },

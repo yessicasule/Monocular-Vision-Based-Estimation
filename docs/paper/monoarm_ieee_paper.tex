@@ -271,7 +271,7 @@ Section~\ref{sec:results} shows -- it introduces a second, less obvious
 singularity at full abduction. Flexion-extension and
 abduction-adduction are
 \begin{align}
-\theta_{flex} &= \operatorname{atan2}(-v_z, -v_y) \\
+\theta_{flex} &= \operatorname{atan2}(v_z, -v_y) \\
 \theta_{abd} &= \arcsin(\operatorname{clip}(-v_x, -1, 1))
 \end{align}
 (the sign convention on $v_x$ accounts for $\hat{\mathbf{x}}$ pointing to
@@ -650,7 +650,7 @@ accurate DOF for both frameworks. We conjecture, but have not
 independently quantified, that the ZXY decomposition's second
 singularity contributes to the remainder: at
 $\theta_{abd}\!\to\!90^\circ$, both $v_y$ and $v_z$ in
-$\theta_{flex}=\operatorname{atan2}(-v_z,-v_y)$ approach zero
+$\theta_{flex}=\operatorname{atan2}(v_z,-v_y)$ approach zero
 simultaneously, so flexion becomes acutely sensitive to small
 measurement noise exactly where this pilot sequence's subject spends
 much of the clip (Fig.~\ref{fig:sample}; ground-truth abduction exceeds

@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import threading
 import time
 from contextlib import asynccontextmanager
 from collections import deque
@@ -122,11 +123,21 @@ class DashboardState:
 
 state = DashboardState()
 
+
+def _warm_up_estimator() -> None:
+    try:
+        state.pipeline.ensure_estimator()
+    except Exception:
+        pass  # recorded in pipeline.status()["estimator_error"]
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     """Capture the running loop on start; release camera and sockets on stop."""
     state.loop = asyncio.get_running_loop()
     WEB_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    # Load the pose network in the background so the first frame does not
+    # stall for seconds; a load failure is surfaced via /api/status.
+    threading.Thread(target=_warm_up_estimator, daemon=True, name="EstimatorWarmup").start()
     yield
     if state.server_source is not None:
         state.server_source.stop()
@@ -347,15 +358,19 @@ async def session_summary(name: str) -> dict:
     data = {f"{s}_{c}": [] for s in ("right", "left") for c in channels}
     tracked = {"right": 0, "left": 0}
     rows = 0
-    duration = 0.0
+    t_first: float | None = None
+    t_last: float | None = None
 
     with open(path, newline="") as f:
         for row in _csv.DictReader(f):
             rows += 1
             try:
-                duration = float(row.get("timestamp_s") or 0.0)
+                ts = float(row.get("timestamp_s") or "nan")
             except ValueError:
-                pass
+                ts = float("nan")
+            if not math.isnan(ts):
+                t_first = ts if t_first is None else t_first
+                t_last = ts
             for side in ("right", "left"):
                 if row.get(f"{side}_tracked") == "1":
                     tracked[side] += 1
@@ -366,6 +381,9 @@ async def session_summary(name: str) -> dict:
                             data[f"{side}_{c}"].append(float(v))
                         except ValueError:
                             pass
+
+    # Measured from the first logged frame, not from when logging was armed
+    duration = (t_last - t_first) if t_first is not None else 0.0
 
     def stats(vals: list[float]) -> dict:
         if not vals:
@@ -386,7 +404,8 @@ async def session_summary(name: str) -> dict:
         "name": path.name,
         "rows": rows,
         "duration_s": round(duration, 2),
-        "mean_rate_hz": round(rows / duration, 2) if duration > 0 else 0.0,
+        # N rows span N-1 frame intervals between the first and last row
+        "mean_rate_hz": round((rows - 1) / duration, 2) if duration > 0 else 0.0,
         "tracked_fraction": {
             s: round(tracked[s] / rows, 4) if rows else 0.0 for s in ("right", "left")
         },

@@ -55,6 +55,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 
 from src.pose import load_estimator
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_arm_angles, ArmAngles
 from src.processing.angle_filter import AngleFilterBank
 
@@ -155,7 +156,8 @@ def run_framework(
         inference_times_ms.append(elapsed_ms)
 
         if lms is not None:
-            angles = compute_arm_angles(lms)
+            angles = compute_arm_angles(angle_landmarks(
+                runner, lms, frame_rgb.shape[1], frame_rgb.shape[0]))
         else:
             angles = None
 

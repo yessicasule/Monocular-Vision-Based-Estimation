@@ -301,26 +301,29 @@ GHUM model with:
 
 ### 2.2 Anatomical Joint Angle Solver (ISB Convention)
 
-Joint angles are computed from 3D normalized landmark coordinates following the
+Joint angles are computed from isotropic 3D landmark coordinates following the
 **International Society of Biomechanics (ISB) ZXY Euler decomposition**:
 
 ```
+Input: isotropic 3D landmarks (MediaPipe metric world landmarks, or
+       image keypoints scaled to pixels for 2D-only networks)
+
 Torso frame: T = [x_torso, y_torso, z_torso]
-  x_torso = normalize(right_shoulder - left_shoulder)
-  y_torso = normalize(mid_hip -> mid_shoulder)
-  z_torso = x_torso × y_torso
+  y_torso = normalize(mid_shoulder - mid_hip)                 (superior)
+  x_torso = Gram-Schmidt(left_shoulder - right_shoulder, y)   (subject's left)
+  z_torso = x_torso × y_torso                                (anterior)
 
-Upper arm vector:
-  u = normalize(elbow - shoulder)
+Upper arm vector in the torso frame (left arm: x negated):
+  v = T^T · normalize(elbow - shoulder) = [vx, vy, vz]
 
-Shoulder flexion   = asin(-u · z_torso)         [degrees]
-Shoulder abduction = atan2(u · x_torso, u · y_torso) [degrees]
-Shoulder rotation  = computed from elbow→wrist in shoulder frame
-Elbow flexion      = acos(dot(u_arm, u_forearm))  [degrees]
+Shoulder flexion   = atan2(vz, -vy)       [degrees, + = forward]
+Shoulder abduction = asin(-vx)            [degrees, + = away from midline]
+Shoulder rotation  = forearm direction about the upper-arm axis
+Elbow flexion      = acos(u_arm · u_forearm)  [degrees, 0 = straight]
 ```
 
-Gimbal-lock avoidance is applied when shoulder flexion exceeds 85°. Shoulder
-rotation is flagged as unreliable when `elbow_flexion < 25°` (anatomical constraint).
+Shoulder rotation is flagged as unreliable when `elbow_flexion < 25°` (the
+forearm is then nearly collinear with the upper arm).
 
 ---
 

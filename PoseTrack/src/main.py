@@ -33,6 +33,7 @@ import numpy as np
 
 from config.config import Config, ANGLES_DIR
 from src.pose.mediapipe_runner import MediaPipeRunner
+from src.pose import angle_landmarks
 from src.processing.angle_solver import compute_bilateral_angles, ArmAngles, BilateralArmAngles
 from src.processing.angle_filter import BilateralFilterBank
 from src.streaming.udp_streamer import UdpAngleSender
@@ -194,7 +195,8 @@ def main() -> None:
 
             if landmarks is not None:
                 # Solve joint angles for both arms
-                raw_angles = compute_bilateral_angles(landmarks)
+                raw_angles = compute_bilateral_angles(
+                    angle_landmarks(runner, landmarks, rgb.shape[1], rgb.shape[0]))
 
                 if raw_angles is not None:
                     # Apply filter (per side, per DOF)

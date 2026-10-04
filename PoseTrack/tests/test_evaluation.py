@@ -28,7 +28,7 @@ from src.evaluation.h36m_loader import (
     _normalize,
     GTAngles,
     H36M_RSHOULDER, H36M_RELBOW, H36M_RWRIST,
-    H36M_LSHOULDER, H36M_RHIP, H36M_LHIP, H36M_CHEST,
+    H36M_LSHOULDER, H36M_LWRIST, H36M_RHIP, H36M_LHIP, H36M_CHEST,
 )
 from src.evaluation.metrics import (
     compute_joint_metrics, evaluate_framework, print_metrics_table,
@@ -41,17 +41,20 @@ from src.evaluation.metrics import (
 # ---------------------------------------------------------------------------
 
 def _make_joints(
-    r_shoulder=(0.2, 1.4, 0.0),
-    r_elbow=   (0.2, 1.0, 0.0),
-    r_wrist=   (0.2, 0.6, 0.0),
-    l_shoulder=(-0.2, 1.4, 0.0),
-    r_hip=     (0.15, 0.9, 0.0),
-    l_hip=     (-0.15, 0.9, 0.0),
+    r_shoulder=(-0.2, 1.4, 0.0),
+    r_elbow=   (-0.2, 1.0, 0.0),
+    r_wrist=   (-0.2, 0.6, 0.0),
+    l_shoulder=(0.2, 1.4, 0.0),
+    r_hip=     (-0.15, 0.9, 0.0),
+    l_hip=     (0.15, 0.9, 0.0),
     chest=     (0.0, 1.2, 0.0),
 ) -> np.ndarray:
     """
     Build a (33, 3) joint array with only the right-arm joints set.
     All other joints default to (0, 0, 0).
+
+    The subject is anatomically consistent: Y up, facing +Z, so their
+    right side is -X and their left side is +X (left = up x forward).
     """
     joints = np.zeros((33, 3), dtype=np.float64)
     joints[H36M_RSHOULDER] = r_shoulder
@@ -62,6 +65,64 @@ def _make_joints(
     joints[H36M_LHIP]      = l_hip
     joints[H36M_CHEST]     = chest
     return joints
+
+
+# ---------------------------------------------------------------------------
+# Helper: build synthetic H3.6M exponential-map rows
+# ---------------------------------------------------------------------------
+# FK skeleton joints: 16/24 = left/right clavicle, 17/25 = left/right
+# shoulder. Bone offsets point along the parent's local +Y, so with no
+# rotation every arm bone points straight up; rotating about Z swings them.
+_HALF_PI = math.pi / 2
+T_POSE    = {16: (0, 0,  _HALF_PI), 24: (0, 0, -_HALF_PI)}
+ARMS_DOWN = {**T_POSE, 17: (0, 0, _HALF_PI), 25: (0, 0, -_HALF_PI)}
+
+
+def _expmap_row(rotations: dict[int, tuple[float, float, float]]) -> np.ndarray:
+    """99-value exp-map frame: zero root position, given per-joint rotations."""
+    row = np.zeros(99)
+    for joint, r in rotations.items():
+        row[3 + 3 * joint: 6 + 3 * joint] = r
+    return row
+
+
+class TestH36mForwardKinematics(unittest.TestCase):
+    """The .txt files hold joint rotations; positions come from FK."""
+
+    def test_bone_lengths_are_rigid_under_any_rotation(self):
+        from src.evaluation.h36m_loader import h36m_expmap_to_xyz
+        rng = np.random.default_rng(0)
+        lengths = []
+        for _ in range(20):
+            xyz = h36m_expmap_to_xyz(rng.uniform(-2, 2, 99))
+            lengths.append([np.linalg.norm(xyz[H36M_RELBOW] - xyz[H36M_RSHOULDER]),
+                            np.linalg.norm(xyz[H36M_RWRIST] - xyz[H36M_RELBOW])])
+        lengths = np.array(lengths)
+        np.testing.assert_allclose(lengths[:, 0], 278.892924, atol=1e-6)
+        np.testing.assert_allclose(lengths[:, 1], 251.728680, atol=1e-6)
+
+    def test_t_pose_is_anatomically_consistent(self):
+        from src.evaluation.h36m_loader import h36m_expmap_to_xyz
+        xyz = h36m_expmap_to_xyz(_expmap_row(T_POSE))
+        # Subject's right is -X, left is +X, arms horizontal at shoulder height
+        self.assertLess(xyz[H36M_RWRIST][0], xyz[H36M_RSHOULDER][0] - 400)
+        self.assertGreater(xyz[H36M_LWRIST][0], xyz[H36M_LSHOULDER][0] + 400)
+        self.assertAlmostEqual(xyz[H36M_RWRIST][1], xyz[H36M_RSHOULDER][1], delta=1e-6)
+        self.assertLess(xyz[H36M_RHIP][0], 0.0)
+        self.assertGreater(xyz[H36M_LHIP][0], 0.0)
+
+    def test_arms_down_gives_neutral_angles(self):
+        from src.evaluation.h36m_loader import h36m_expmap_to_xyz
+        gt = _compute_gt_angles(h36m_expmap_to_xyz(_expmap_row(ARMS_DOWN)))
+        self.assertIsNotNone(gt)
+        for v in (gt.shoulder_flexion, gt.shoulder_abduction, gt.elbow_flexion,
+                  gt.left_shoulder_flexion, gt.left_shoulder_abduction, gt.left_elbow_flexion):
+            self.assertAlmostEqual(v, 0.0, delta=1.0)
+
+    def test_short_row_is_rejected(self):
+        from src.evaluation.h36m_loader import h36m_expmap_to_xyz
+        with self.assertRaises(ValueError):
+            h36m_expmap_to_xyz(np.zeros(50))
 
 
 # ---------------------------------------------------------------------------
@@ -76,9 +137,9 @@ class TestH36mLoader(unittest.TestCase):
         shoulder flexion should be ≈ 0°.
         """
         joints = _make_joints(
-            r_shoulder=(0.2, 1.4, 0.0),
-            r_elbow   =(0.2, 1.0, 0.0),  # directly below shoulder
-            r_wrist   =(0.2, 0.6, 0.0),
+            r_shoulder=(-0.2, 1.4, 0.0),
+            r_elbow   =(-0.2, 1.0, 0.0),  # directly below shoulder
+            r_wrist   =(-0.2, 0.6, 0.0),
         )
         gt = _compute_gt_angles(joints)
         self.assertIsNotNone(gt)
@@ -88,9 +149,9 @@ class TestH36mLoader(unittest.TestCase):
     def test_arm_down_elbow_near_zero(self):
         """Arm fully extended downward → elbow flexion ≈ 0°."""
         joints = _make_joints(
-            r_shoulder=(0.2, 1.4, 0.0),
-            r_elbow   =(0.2, 1.0, 0.0),
-            r_wrist   =(0.2, 0.6, 0.0),  # collinear: elbow = 0°
+            r_shoulder=(-0.2, 1.4, 0.0),
+            r_elbow   =(-0.2, 1.0, 0.0),
+            r_wrist   =(-0.2, 0.6, 0.0),  # collinear: elbow = 0°
         )
         gt = _compute_gt_angles(joints)
         self.assertIsNotNone(gt)
@@ -99,29 +160,40 @@ class TestH36mLoader(unittest.TestCase):
 
     def test_arm_forward_positive_flexion(self):
         """
-        Arm raised forward (elbow at shoulder height, in front of body).
-        In H3.6M coordinates (Y-up, Z-forward), 'forward' = positive Z.
-        Expect shoulder_flexion > 45°.
+        Arm raised straight forward (elbow at shoulder height, in front of
+        the body). The fixture subject faces +Z. Expect flexion ≈ +90°.
         """
         joints = _make_joints(
-            r_shoulder=(0.2, 1.4,  0.0),
-            r_elbow   =(0.2, 1.4,  0.3),   # forward (positive Z)
-            r_wrist   =(0.2, 1.4,  0.6),
+            r_shoulder=(-0.2, 1.4,  0.0),
+            r_elbow   =(-0.2, 1.4,  0.3),   # forward (positive Z)
+            r_wrist   =(-0.2, 1.4,  0.6),
         )
         gt = _compute_gt_angles(joints)
         self.assertIsNotNone(gt)
-        self.assertGreater(gt.shoulder_flexion, 30.0,
-            msg=f"Arm forward: expected flexion>30°, got {gt.shoulder_flexion:.1f}°")
+        self.assertAlmostEqual(gt.shoulder_flexion, 90.0, delta=1.0,
+            msg=f"Arm forward: expected flexion≈+90°, got {gt.shoulder_flexion:.1f}°")
+
+    def test_arm_backward_negative_flexion(self):
+        """Arm swung behind the body (extension) → negative flexion."""
+        joints = _make_joints(
+            r_shoulder=(-0.2, 1.4,  0.0),
+            r_elbow   =(-0.2, 1.1, -0.3),   # down and behind (negative Z)
+            r_wrist   =(-0.2, 0.8, -0.6),
+        )
+        gt = _compute_gt_angles(joints)
+        self.assertIsNotNone(gt)
+        self.assertAlmostEqual(gt.shoulder_flexion, -45.0, delta=1.0,
+            msg=f"Arm backward: expected flexion≈-45°, got {gt.shoulder_flexion:.1f}°")
 
     def test_arm_side_positive_abduction(self):
         """
-        Arm raised out to the right side (positive X direction).
+        Arm raised out to the subject's right side (-X direction).
         Expect shoulder_abduction > 30°.
         """
         joints = _make_joints(
-            r_shoulder=(0.2, 1.4, 0.0),
-            r_elbow   =(0.5, 1.4, 0.0),    # elbow out to the right (+X)
-            r_wrist   =(0.8, 1.4, 0.0),
+            r_shoulder=(-0.2, 1.4, 0.0),
+            r_elbow   =(-0.5, 1.4, 0.0),   # elbow out to the subject's right (-X)
+            r_wrist   =(-0.8, 1.4, 0.0),
         )
         gt = _compute_gt_angles(joints)
         self.assertIsNotNone(gt)
@@ -133,9 +205,9 @@ class TestH36mLoader(unittest.TestCase):
         Upper arm hanging down, forearm pointing forward → elbow ≈ 90°.
         """
         joints = _make_joints(
-            r_shoulder=(0.2, 1.4,  0.0),
-            r_elbow   =(0.2, 1.0,  0.0),   # upper arm: down
-            r_wrist   =(0.2, 1.0,  0.4),   # forearm: forward (+Z)
+            r_shoulder=(-0.2, 1.4,  0.0),
+            r_elbow   =(-0.2, 1.0,  0.0),   # upper arm: down
+            r_wrist   =(-0.2, 1.0,  0.4),   # forearm: forward (+Z)
         )
         gt = _compute_gt_angles(joints)
         self.assertIsNotNone(gt)
@@ -169,9 +241,9 @@ class TestH36mLoader(unittest.TestCase):
     def test_rotation_unreliable_when_elbow_straight(self):
         """Rotation should be marked unreliable when elbow is nearly straight."""
         joints = _make_joints(
-            r_shoulder=(0.2, 1.4, 0.0),
-            r_elbow   =(0.2, 1.0, 0.0),
-            r_wrist   =(0.2, 0.6, 0.0),   # straight arm
+            r_shoulder=(-0.2, 1.4, 0.0),
+            r_elbow   =(-0.2, 1.0, 0.0),
+            r_wrist   =(-0.2, 0.6, 0.0),   # straight arm
         )
         gt = _compute_gt_angles(joints)
         if gt is not None and gt.elbow_flexion < 20.0:
@@ -186,19 +258,12 @@ class TestH36mLoader(unittest.TestCase):
 
     def test_parse_h36m_file_synthetic_content(self):
         """
-        Synthetic .txt content with valid 99-value rows should parse correctly.
-        We construct a frame with known joint positions and verify output.
+        Synthetic .txt content with valid 99-value exp-map rows should parse
+        correctly: a T-pose frame yields ~90° abduction on both arms.
         """
         from src.evaluation.h36m_loader import parse_h36m_file
 
-        # Build one frame: 33 joints, joints at known positions
-        joints = _make_joints(
-            r_shoulder=(0.2, 1.4, 0.0),
-            r_elbow   =(0.2, 1.0, 0.0),
-            r_wrist   =(0.2, 0.6, 0.0),
-        )
-        flat = joints.flatten()   # 99 values
-        line = ",".join(f"{v:.6f}" for v in flat)
+        line = ",".join(f"{v:.6f}" for v in _expmap_row(T_POSE))
 
         # Write to a temp file
         with tempfile.NamedTemporaryFile(
@@ -215,6 +280,8 @@ class TestH36mLoader(unittest.TestCase):
             # Both frames should have the same angles
             self.assertAlmostEqual(
                 results[0].shoulder_flexion, results[1].shoulder_flexion, places=3)
+            self.assertAlmostEqual(results[0].shoulder_abduction, 90.0, delta=1.0)
+            self.assertAlmostEqual(results[0].left_shoulder_abduction, 90.0, delta=1.0)
         finally:
             tmp_path.unlink(missing_ok=True)
 
@@ -222,9 +289,7 @@ class TestH36mLoader(unittest.TestCase):
         """Rows with fewer than 99 values should be silently skipped."""
         from src.evaluation.h36m_loader import parse_h36m_file
 
-        joints = _make_joints()
-        flat   = joints.flatten()
-        good   = ",".join(f"{v:.4f}" for v in flat)
+        good   = ",".join(f"{v:.4f}" for v in _expmap_row(ARMS_DOWN))
         bad    = "1.0,2.0,3.0"   # too few values
 
         with tempfile.NamedTemporaryFile(

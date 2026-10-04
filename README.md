@@ -91,8 +91,8 @@ implementation.
 ## Status
 
 The live pipeline, web dashboard, Unity integration, calibration, logging and
-evaluation tooling are implemented and tested (`python -m pytest tests/ -q` in
-`PoseTrack/`). Demonstration recordings must be captured on hardware with a
+evaluation tooling are implemented and tested (`pip install -r requirements-dev.txt`
+then `python -m pytest tests/ -q` in `PoseTrack/`). Demonstration recordings must be captured on hardware with a
 camera; `scripts/record_demo.py` and `scripts/run_capture_session.py` produce
 them.
 

@@ -93,6 +93,12 @@ class UdpAngleSender:
         self._last_packet    = ""
         self._last_packet_t  = 0.0
         self._packet_history = deque(maxlen=32)
+        self._last_error     = ""
+
+        # Nothing is transmitted until a measurement exists: zeros sent before
+        # the first tracked frame would drive the avatar with a pose nobody
+        # measured.
+        self._has_data = False
 
         # Current angle values (degrees): right arm
         self._flex: float = 0.0
@@ -146,6 +152,7 @@ class UdpAngleSender:
             self._abd  = angles.shoulder_abduction
             self._rot  = angles.shoulder_rotation
             self._elb  = angles.elbow_flexion
+            self._has_data = True
 
     def update_bilateral(self, bilateral: BilateralArmAngles) -> None:
         """
@@ -165,6 +172,8 @@ class UdpAngleSender:
                 self._l_abd  = bilateral.left.shoulder_abduction
                 self._l_rot  = bilateral.left.shoulder_rotation
                 self._l_elb  = bilateral.left.elbow_flexion
+            if bilateral.right is not None or bilateral.left is not None:
+                self._has_data = True
 
     @property
     def packets_sent(self) -> int:
@@ -209,6 +218,8 @@ class UdpAngleSender:
             "packets_sent":  self._packets_sent,
             "send_errors":   self._send_errors,
             "bilateral":     self._bilateral,
+            "awaiting_data": not self._has_data,
+            "last_error":    self._last_error,
             "last_packet":   self._last_packet,
             "last_packet_t": self._last_packet_t,
             "history":       [{"t": t, "packet": p} for t, p in history[-8:]],
@@ -237,8 +248,10 @@ class UdpAngleSender:
     def _loop(self) -> None:
         """Fixed-rate send loop — runs on the background thread."""
         target = time.perf_counter()
+        last_error_print = 0.0
         while self._running:
             with self._lock:
+                has_data = self._has_data
                 if self._bilateral:
                     msg = self._format_bilateral(
                         self._flex,   self._abd,   self._rot,   self._elb,
@@ -246,21 +259,26 @@ class UdpAngleSender:
                     )
                 else:
                     msg = self._format(self._flex, self._abd, self._rot, self._elb)
-            try:
-                self._sock.sendto(msg, self._addr)
-                self._packets_sent += 1
-                text = msg.decode("utf-8").strip()
-                self._last_packet   = text
-                self._last_packet_t = time.time()
-                self._packet_history.append((self._last_packet_t, text))
-            except OSError as e:
-                self._send_errors += 1
-                print(f"\n[UDP TX ERROR] send to {self._addr[0]}:{self._addr[1]} "
-                      f"failed: {e} — transmission stopped")
-                self._running = False
-                return
+            if has_data:
+                try:
+                    self._sock.sendto(msg, self._addr)
+                    self._packets_sent += 1
+                    text = msg.decode("utf-8").strip()
+                    self._last_packet   = text
+                    self._last_packet_t = time.time()
+                    self._packet_history.append((self._last_packet_t, text))
+                except OSError as e:
+                    # Usually transient (network down, host unreachable):
+                    # count it, report at most once a second, keep streaming.
+                    self._send_errors += 1
+                    self._last_error = f"{type(e).__name__}: {e}"
+                    now = time.perf_counter()
+                    if now - last_error_print >= 1.0:
+                        print(f"[UDP TX ERROR] send to {self._addr[0]}:{self._addr[1]} "
+                              f"failed: {e} (errors so far: {self._send_errors})")
+                        last_error_print = now
 
-            if self._verbose:
+            if self._verbose and has_data:
                 now = time.perf_counter()
                 elapsed = now - self._last_log_t
                 if elapsed >= self._log_interval:

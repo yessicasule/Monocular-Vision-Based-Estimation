@@ -17,8 +17,18 @@ MediaPipe ships two pose inference APIs:
    Returns: result.pose_landmarks[0] (NormalizedLandmark list)
 
 This runner tries the Solutions API first and falls back to the Tasks API
-if the solutions module is unavailable. Both paths return the same
-Landmark interface to the rest of the pipeline.
+if the solutions module is unavailable (it was removed in mediapipe 0.10.3x).
+Both paths return the same Landmark interface to the rest of the pipeline,
+and both honour ``model_complexity`` (Tasks API: lite / full / heavy model).
+
+World Landmarks
+---------------
+Besides the normalised image landmarks, both APIs return *world* landmarks:
+metric 3D coordinates in metres with the hip midpoint as origin and the same
+axis orientation as the image (x right, y down, z away from the camera).
+Unlike the image landmarks, their three axes share one unit, so they are the
+correct input for joint-angle geometry. The latest set is exposed as
+``self.world_landmarks``.
 
 Timestamp Handling (Tasks API)
 -------------------------------
@@ -49,25 +59,38 @@ from pathlib import Path
 import numpy as np
 
 from .base import PoseEstimator, Landmark, N_LANDMARKS
+from .tf_guard import hide_unloadable_tensorflow
 
 # --------------------------------------------------------------------------
 # Model download (Tasks API only)
 # --------------------------------------------------------------------------
-_MODEL_DIR   = Path(__file__).resolve().parent / "models"
-_MODEL_PATH  = _MODEL_DIR / "pose_landmarker_lite.task"
-_MODEL_URL   = (
-    "https://storage.googleapis.com/mediapipe-models/"
-    "pose_landmarker/pose_landmarker_lite/float16/latest/"
-    "pose_landmarker_lite.task"
-)
+_MODEL_DIR      = Path(__file__).resolve().parent / "models"
+_MODEL_VARIANTS = {0: "lite", 1: "full", 2: "heavy"}   # model_complexity → model
 
 
-def _ensure_model() -> None:
-    if not _MODEL_PATH.exists():
+def _model_path(variant: str) -> Path:
+    return _MODEL_DIR / f"pose_landmarker_{variant}.task"
+
+
+def _model_url(variant: str) -> str:
+    return (
+        "https://storage.googleapis.com/mediapipe-models/"
+        f"pose_landmarker/pose_landmarker_{variant}/float16/latest/"
+        f"pose_landmarker_{variant}.task"
+    )
+
+
+def _ensure_model(variant: str) -> Path:
+    """Return the .task file for `variant`, downloading it on first use."""
+    path = _model_path(variant)
+    if not path.exists():
         _MODEL_DIR.mkdir(parents=True, exist_ok=True)
-        print(f"[MediaPipe] Downloading model → {_MODEL_PATH}")
-        urllib.request.urlretrieve(_MODEL_URL, _MODEL_PATH)
+        tmp = path.with_suffix(".part")
+        print(f"[MediaPipe] Downloading {variant} model -> {path}")
+        urllib.request.urlretrieve(_model_url(variant), tmp)
+        tmp.replace(path)                # never leave a truncated model behind
         print("[MediaPipe] Download complete.")
+    return path
 
 
 class MediaPipeRunner(PoseEstimator):
@@ -107,13 +130,21 @@ class MediaPipeRunner(PoseEstimator):
         # round to the same millisecond, so the last value is remembered and
         # the next timestamp is nudged forward when that happens.
         self._last_ts_ms  = -1
+        # Metric 3D landmarks of the most recent frame (None if not detected)
+        self.world_landmarks: list[Landmark] | None = None
+        # Which Tasks model actually loaded ("lite" / "full" / "heavy")
+        self.model_variant: str | None = None
+
+        # MediaPipe imports TensorFlow for doc helpers; a TF that is
+        # installed but unloadable must not break MediaPipe.
+        hide_unloadable_tensorflow()
 
         try:
             self._init_solutions(detection_confidence, tracking_confidence, model_complexity)
         except Exception as e:
             print(f"[MediaPipe] Solutions API unavailable ({e}), trying Tasks API...")
             self._use_tasks = True
-            self._init_tasks(detection_confidence, tracking_confidence)
+            self._init_tasks(detection_confidence, tracking_confidence, model_complexity)
 
     # ------------------------------------------------------------------
     # Initialisation
@@ -138,13 +169,26 @@ class MediaPipeRunner(PoseEstimator):
             model_complexity=complexity,
         )
 
-    def _init_tasks(self, det_conf: float, track_conf: float) -> None:
+    def _init_tasks(self, det_conf: float, track_conf: float, complexity: int = 1) -> None:
         from mediapipe.tasks.python import vision
         from mediapipe.tasks.python.core.base_options import BaseOptions
 
-        _ensure_model()
+        variant = _MODEL_VARIANTS.get(int(complexity), "full")
+        try:
+            model_path = _ensure_model(variant)
+        except Exception as exc:
+            if variant == "lite":
+                raise
+            # Offline and the requested model is not cached: the bundled
+            # lite model still works, but say so rather than pretend.
+            print(f"[MediaPipe] Could not obtain the {variant} model ({exc}); "
+                  "falling back to the bundled lite model.")
+            variant = "lite"
+            model_path = _ensure_model(variant)
+        self.model_variant = variant
+
         options = vision.PoseLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=str(_MODEL_PATH)),
+            base_options=BaseOptions(model_asset_path=str(model_path)),
             running_mode=vision.RunningMode.VIDEO,
             min_pose_detection_confidence=det_conf,
             min_pose_presence_confidence=det_conf,
@@ -164,7 +208,14 @@ class MediaPipeRunner(PoseEstimator):
     def _process_solutions(self, image_rgb: np.ndarray) -> list[Landmark] | None:
         results = self.pose.process(image_rgb)
         if not results.pose_landmarks:
+            self.world_landmarks = None
             return None
+        world = getattr(results, "pose_world_landmarks", None)
+        self.world_landmarks = (
+            [Landmark(x=float(lm.x), y=float(lm.y), z=float(lm.z),
+                      visibility=float(lm.visibility)) for lm in world.landmark]
+            if world else None
+        )
         return [
             Landmark(
                 x=float(lm.x),
@@ -187,7 +238,16 @@ class MediaPipeRunner(PoseEstimator):
         result = self.pose.detect_for_video(mp_img, ts_ms)
 
         if not result.pose_landmarks:
+            self.world_landmarks = None
             return None
+        image_lms = result.pose_landmarks[0]
+        world = result.pose_world_landmarks[0] if result.pose_world_landmarks else None
+        # World landmarks carry no visibility of their own; reuse the image one
+        self.world_landmarks = (
+            [Landmark(x=float(w.x), y=float(w.y), z=float(w.z),
+                      visibility=float(i.visibility)) for w, i in zip(world, image_lms)]
+            if world else None
+        )
         return [
             Landmark(
                 x=float(lm.x),
@@ -195,7 +255,7 @@ class MediaPipeRunner(PoseEstimator):
                 z=float(lm.z),
                 visibility=float(lm.visibility),
             )
-            for lm in result.pose_landmarks[0]
+            for lm in image_lms
         ]
 
     def close(self) -> None:

@@ -264,7 +264,7 @@ def evaluate_framework(
 
 # ── Reporting ─────────────────────────────────────────────────────────────────
 
-def print_metrics_table(all_results: list[FrameworkMetrics]) -> None:
+def print_metrics_table(all_results: list[FrameworkMetrics], dataset: str = "H3.6M") -> None:
     """Print a formatted comparison table to stdout."""
     names = [r.framework for r in all_results]
     col_w = max(16, max(len(n) for n in names) + 2)
@@ -277,7 +277,7 @@ def print_metrics_table(all_results: list[FrameworkMetrics]) -> None:
         print()
 
     print("\n" + "=" * (28 + col_w * len(names)))
-    print("  VALIDATION AGAINST H3.6M GROUND TRUTH")
+    print(f"  VALIDATION AGAINST {dataset} GROUND TRUTH")
     print("=" * (28 + col_w * len(names)))
     row("Framework",       names)
     row(sep[:26],          [sep[:col_w]] * len(names))
